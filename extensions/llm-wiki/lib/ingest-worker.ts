@@ -19,6 +19,7 @@ import {
   type WikilinkValidationMode,
 } from "./knowledge-links.js";
 import { appendEvent, rebuildMetadataLight } from "./metadata.js";
+import { readPromptOverride } from "./prompts.js";
 import { runSubAgent } from "./subagent.js";
 import { resolveWikilinkValidation } from "./task-config.js";
 import { fmtDate, readJson, slugify, type VaultPaths } from "./utils.js";
@@ -515,6 +516,23 @@ export interface RunIngestSynthesisArgs {
 }
 
 /**
+ * pi-mem-wiki fork (v2-d): compose the ingest synthesis system prompt through
+ * the #171 hook seam. Pure function over (paths, language) so tests can assert
+ * the composition without running a model. Order: INGEST_SYSTEM → language
+ * directive → vault-owner directive block (prompts/ingest-synthesis.md).
+ */
+export function composeIngestSystemPrompt(paths: VaultPaths, synthesisLanguage?: string): string {
+  const languageInstruction = synthesisLanguage
+    ? `\n\nWrite all generated content in ${synthesisLanguage}, including titles, headings, summaries, descriptions, and concept/entity names. Only preserve code, API names, file paths, commands, exact technical identifiers, and verbatim quotations in their original form.`
+    : "";
+  const ownerDirective = readPromptOverride(paths, "ingest-synthesis");
+  const ownerBlock = ownerDirective
+    ? `\n\n## Vault-owner directive\n\n${ownerDirective}`
+    : "";
+  return INGEST_SYSTEM + languageInstruction + ownerBlock;
+}
+
+/**
  * Run the synthesis sub-agent for a single source, then commit + rebuild
  * metadata. Returns the commit result, or undefined if the model produced no
  * synthesis.
@@ -541,10 +559,10 @@ export async function runIngestSynthesis(
   const content = extracted.slice(0, maxChars ?? 24_000);
   if (!content.trim()) return undefined;
 
-  const languageInstruction = synthesisLanguage
-    ? `\n\nWrite all generated content in ${synthesisLanguage}, including titles, headings, summaries, descriptions, and concept/entity names. Only preserve code, API names, file paths, commands, exact technical identifiers, and verbatim quotations in their original form.`
-    : "";
-  const systemPrompt = INGEST_SYSTEM + languageInstruction;
+  // pi-mem-wiki fork (v2-d): the system prompt is composed through the #171
+  // hook seam — a vault-owner directive file (prompts/ingest-synthesis.md) is
+  // appended as a directive block; absent file = upstream text, byte-for-byte.
+  const systemPrompt = composeIngestSystemPrompt(paths, synthesisLanguage);
 
   let committed: CommitResult | undefined;
 
