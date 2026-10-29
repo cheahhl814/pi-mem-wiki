@@ -40,6 +40,13 @@ export interface RecallResult {
   vaultLabel?: string;
   /** Relevance score (higher = better match). Used for filtering auto-injected results. */
   score: number;
+  /** pi-mem-wiki fork (fix 4): time-validity info for age-stamped recall. */
+  age?: {
+    state?: "stale" | "not-yet-valid" | "expired" | "superseded";
+    note?: string;
+    /** Whole days since frontmatter.updated, when parseable. */
+    days?: number;
+  };
 }
 
 type Scored = {
@@ -50,6 +57,11 @@ type Scored = {
   bestChunkPreview: string;
   /** Cosine similarity to the query vector (0 when no semantic context). */
   semCos: number;
+  /** pi-mem-wiki fork (fix 4): time-validity data, penalty applied after fusion. */
+  timeState?: PageTimeState;
+  timePenalty?: number;
+  ageDays?: number;
+  ageNote?: string;
 };
 
 // ─── Hybrid (lexical + semantic) ranking ─────────────────
@@ -450,6 +462,96 @@ function extractExpansionTerms(
     .map(([term]) => term);
 }
 
+// ─── Time semantics (pi-mem-wiki fork fix 4) ────────────
+
+export type PageTimeState = "current" | "stale" | "not-yet-valid" | "expired" | "superseded";
+
+/** Human-readable age stamp appended to recall output lines. */
+function ageStamp(age: RecallResult["age"]): string {
+  if (!age) return "";
+  if (age.note) return ` — \u23f0 ${age.note}`;
+  if (age.state) return ` — \u23f0 ${age.state}`;
+  if (age.days !== undefined) return ` — \u23f0 updated ${age.days}d ago`;
+  return "";
+}
+
+/** Final ranking multipliers — decay supersedes, never deletes. */
+export const TIME_PENALTY: Record<PageTimeState, number> = {
+  current: 1,
+  stale: 0.5,
+  "not-yet-valid": 0.1,
+  expired: 0.1,
+  superseded: 0.1,
+};
+
+const DAY_MS = 86_400_000;
+
+function parseIsoDate(value: unknown): Date | null {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}(T.*)?$/.test(v)) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/** "90d" | "12w" | "6m" | "1y" | plain number-of-days → days; null when not a duration. */
+export function parseDurationDays(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) return value;
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(d|w|m|y)?$/i);
+  if (!match) return null;
+  const n = Number(match[1]);
+  switch ((match[2] ?? "d").toLowerCase()) {
+    case "w": return n * 7;
+    case "m": return n * 30;
+    case "y": return n * 365;
+    default: return n;
+  }
+}
+
+export interface PageTimeInfo {
+  state: PageTimeState;
+  note?: string;
+}
+
+/**
+ * Evaluate a page's time validity from frontmatter. Precedence:
+ * superseded_by > valid_until (past) > valid_from (future) > stale_after.
+ * Nothing deletes — every state still recalls; only the ranking changes
+ * (upstream #314: stale_after declared but never consumed).
+ */
+export function evaluatePageTime(
+  frontmatter: Record<string, unknown>,
+  now: Date = new Date(),
+): PageTimeInfo {
+  const supersededBy = frontmatter.superseded_by;
+  if (typeof supersededBy === "string" && supersededBy.trim()) {
+    return { state: "superseded", note: `superseded by ${supersededBy.trim()}` };
+  }
+  const validUntil = parseIsoDate(frontmatter.valid_until);
+  if (validUntil && now.getTime() > validUntil.getTime()) {
+    return { state: "expired", note: `valid until ${String(frontmatter.valid_until)}` };
+  }
+  const validFrom = parseIsoDate(frontmatter.valid_from);
+  if (validFrom && now.getTime() < validFrom.getTime()) {
+    return { state: "not-yet-valid", note: `valid from ${String(frontmatter.valid_from)}` };
+  }
+  const staleDays = parseDurationDays(frontmatter.stale_after);
+  if (staleDays !== null) {
+    const updated = parseIsoDate(frontmatter.updated);
+    if (updated) {
+      const ageDays = (now.getTime() - updated.getTime()) / DAY_MS;
+      if (ageDays > staleDays) {
+        return {
+          state: "stale",
+          note: `stale after ${staleDays}d (updated ${Math.floor(ageDays)}d ago)`,
+        };
+      }
+    }
+  }
+  return { state: "current" };
+}
+
 /**
  * Search a single vault's registry for pages matching a query.
  * Returns up to `maxResults` matches, each with a content preview.
@@ -568,6 +670,21 @@ export function searchWiki(
     }
     const semEligible = semCos >= SEMANTIC_MIN_COSINE;
 
+    // pi-mem-wiki fork (fix 4): evaluate time validity once per candidate.
+    // Time fields may be non-standard frontmatter (superseded_by, valid_from,
+    // valid_until), which parsePage does NOT surface — but buildRegistry copies
+    // doc.extensions into the registry entry, so prefer entry values.
+    const timeFields: Record<string, unknown> = { ...frontmatter };
+    for (const key of ["superseded_by", "valid_from", "valid_until", "stale_after"] as const) {
+      const fromEntry = (entry as Record<string, unknown>)[key];
+      if (fromEntry !== undefined) timeFields[key] = fromEntry;
+    }
+    const timeInfo = evaluatePageTime(timeFields);
+    const updatedDate = parseIsoDate(frontmatter.updated);
+    const ageDays = updatedDate
+      ? Math.floor((Date.now() - updatedDate.getTime()) / DAY_MS)
+      : undefined;
+
     if (score > 0 || semEligible) {
       scored.push({
         id,
@@ -576,6 +693,10 @@ export function searchWiki(
         pagePath,
         bestChunkPreview: bestChunkContent ? chunkPreview(bestChunkHeading, bestChunkContent) : "",
         semCos,
+        timeState: timeInfo.state,
+        timePenalty: TIME_PENALTY[timeInfo.state],
+        ageDays,
+        ageNote: timeInfo.note,
       });
     }
   }
@@ -622,16 +743,37 @@ export function searchWiki(
     }
   }
 
+  // pi-mem-wiki fork (fix 4): time decay, applied dead last so neither PRF
+  // expansion nor semantic fusion can resurrect a decayed page past a current
+  // one. Ranking-only — decay supersedes, never deletes (history queries like
+  // "why did we decide X in July" stay answerable).
+  for (const item of scored) {
+    if (item.timePenalty !== undefined && item.timePenalty !== 1) {
+      item.score *= item.timePenalty;
+    }
+  }
+
   // Re-sort after expansion + semantic scoring
   scored.sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
   const top = scored.filter((s) => s.score >= minScore).slice(0, maxResults);
 
-  return top.map(({ id, entry, pagePath, score, bestChunkPreview }) => {
+  return top.map(({ id, entry, pagePath, score, bestChunkPreview, timeState, ageDays, ageNote }) => {
     let preview = bestChunkPreview;
     if (!preview && existsSync(pagePath)) {
       // Fallback: no chunk matched, show page intro
       preview = pagePreview(readFileSync(pagePath, "utf-8"));
     }
+
+    const age =
+      timeState && timeState !== "current"
+        ? {
+            state: timeState as "stale" | "not-yet-valid" | "expired" | "superseded",
+            note: ageNote,
+            ...(ageDays !== undefined ? { days: ageDays } : {}),
+          }
+        : ageDays !== undefined
+          ? { days: ageDays }
+          : undefined;
 
     return {
       id,
@@ -640,6 +782,7 @@ export function searchWiki(
       preview,
       path: pagePath,
       score,
+      ...(age ? { age } : {}),
     };
   });
 }
@@ -992,7 +1135,7 @@ export function formatRecallContext(
       const snippet = linkSnippet(r.preview);
       const tail = snippet ? ` — ${snippet}` : "";
       lines.push(
-        `${i + 1}. **[[${r.id}]]** — *${r.type}* — score ${r.score.toFixed(1)}${vaultTag} — ${r.title}${tail}`,
+        `${i + 1}. **[[${r.id}]]** — *${r.type}* — score ${r.score.toFixed(1)}${vaultTag}${ageStamp(r.age)} — ${r.title}${tail}`,
       );
       // Surface a read-resolvable path so expansion is a single, first-try
       // `read` (issue: wikilink ids aren't resolvable by the file read tool).
@@ -1023,7 +1166,7 @@ export function formatRecallContext(
   if (hasSkill) lines.splice(1, 0, "", skillNudge);
   for (const r of results) {
     const vaultTag = r.vaultLabel ? ` ${r.vaultLabel}` : "";
-    lines.push(`- **[[${r.id}]]** — *${r.type}* — ${r.title}${vaultTag}`);
+    lines.push(`- **[[${r.id}]]** — *${r.type}* — ${r.title}${vaultTag}${ageStamp(r.age)}`);
     // Skills/case carve-out: inline the body (adherence > context-economy). Only
     // here does the default path deviate from the pre-fix small-vault render —
     // and only when a skill/case matched (i.e. the trajectories feature is on),
