@@ -1,6 +1,17 @@
 <div align="center">
 
-# @zosmaai/pi-llm-wiki
+# @cheahhl814/pi-mem-wiki
+
+> **Fork notice:** this is a agentic-memory fork of
+> [`zosmaai/pi-llm-wiki`](https://github.com/zosmaai/pi-llm-wiki) (MIT, kept for
+> upstream rebasing as the `upstream` remote). The fork's diverging work:
+> **lint hardening** (read-only default, tag-links, gated auto-creation),
+> **project scoping** for ambient recall, **CJK-aware lexical fallback** with a
+> loud unconfigured-index warning, and **time semantics** (consume
+> `stale_after`; page-level `valid_from`/`valid_until`/`superseded_by`;
+> age-stamped recall). Designed via a 3-seat multi-agent brainstorm
+> (Borda-voted, 2026-10-29) — see `docs/superpowers/roadmaps/fork-v1.md`.
+
 
 **English** | <a href="./README.zh.md">中文</a> | <a href="./README.es.md">Español</a> | <a href="./README.ja.md">日本語</a> | <a href="./README.de.md">Deutsch</a> | <a href="./README.fr.md">Français</a> | <a href="./README.pt.md">Português</a> | <a href="./README.ru.md">Русский</a> | <a href="./README.ko.md">한국어</a> | <a href="./README.hi.md">हिंदी</a>
 
