@@ -119,12 +119,14 @@ describe("searchWiki time-decay integration", () => {
     const old = byId.get("concepts/protocol-old");
     expect(current).toBeDefined();
     expect(old).toBeDefined();
-    // Identical base scores → the superseded twin's final score is exactly ×0.1.
-    expect(old!.score).toBeCloseTo(current!.score * 0.1, 6);
-    // Ranking: current strictly above superseded (identical base scores, ×0.1 decay).
+    // Ranking: current strictly above superseded. With review follow-up PRF-seed
+    // exclusion the pre-decay bases are no longer identical (the superseded
+    // twin cannot feed expansion), so assert order + strong decay rather than
+    // an exact ×10 ratio.
     expect(results.findIndex((r) => r.id === "concepts/protocol-current")).toBeLessThan(
       results.findIndex((r) => r.id === "concepts/protocol-old"),
     );
+    expect(old!.score).toBeLessThan(current!.score * 0.5);
     // Age stamps: superseded twin carries state + note; current carries days.
     expect(old!.age?.state).toBe("superseded");
     expect(old!.age?.note).toBe("superseded by concepts/protocol-current");

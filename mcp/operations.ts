@@ -135,11 +135,14 @@ export async function recallOperation(
   paths: VaultPaths,
   query: string,
   maxResults = 5,
+  // pi-mem-wiki fork (v2 follow-up, review low-15): parity with the Pi tool's
+  // cold-pool escape hatch and project scoping.
+  scopeFilter?: { projectId?: string; includeCold?: boolean },
 ): Promise<{
   results: RecallResult[];
   diagnostics: Array<{ code: string; message: string }>;
 }> {
-  const results = searchWikiLayered(paths, query, maxResults);
+  const results = searchWikiLayered(paths, query, maxResults, 0, true, undefined, scopeFilter);
   const vaultState = inspectVaultFormat(paths);
   return {
     results,

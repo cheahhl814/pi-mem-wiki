@@ -1,7 +1,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createKnowledgeDocument, serializeKnowledgeDocument } from "./knowledge-document.js";
-import { buildResolvedBacklinks, buildWikilinkIndex } from "./knowledge-links.js";
+import {
+  buildResolvedBacklinks,
+  buildWikilinkIndex,
+  resolveWikilink,
+} from "./knowledge-links.js";
 import { repairLegacyKnowledgeDocuments } from "./legacy-repair.js";
 import { appendEvent, rebuildMetadata, rebuildMetadataLight } from "./metadata.js";
 import { readQmdIndexStatus } from "./qmd-indexing.js";
@@ -77,6 +81,8 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
   const findings: string[] = [];
   let missingPages = 0;
   let contradictions = 0;
+  // pi-mem-wiki fork (v2 follow-up, review low-10): dangling supersession count.
+  let danglingSupersessions = 0;
   // pi-mem-wiki fork: classify unresolved targets before they become findings.
   // Bare tokens (no "dir/" prefix) are tag-like references, and "raw/**" targets
   // are immutable source-packet paths — neither is a missing PAGE, so neither
@@ -105,6 +111,22 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
     for (const d of resolved.diagnostics) {
       if (d.code === "link_ambiguous") {
         findings.push(d.message.replace("Ambiguous wikilink: ", "Ambiguous: "));
+      }
+    }
+
+    // pi-mem-wiki fork (v2 follow-up, review low-10): a page that declares
+    // superseded_by must point at a page that EXISTS. A dangling supersession
+    // silently decays a live page (×0.1) with no way to see why.
+    const supersededByRaw =
+      (page.frontmatter?.superseded_by as string | undefined) ?? undefined;
+    if (typeof supersededByRaw === "string" && supersededByRaw.trim()) {
+      const target = supersededByRaw.trim().replace(/^\[\[|\]\]$/g, "").trim();
+      const resolution = resolveWikilink(target, wikilinkIndex);
+      if (resolution.kind !== "resolved") {
+        danglingSupersessions++;
+        findings.push(
+          `Dangling supersession: ${page.id} → ${resolution.kind === "ambiguous" ? `ambiguous ${target}` : target} (page still decays ×0.1 until fixed)`,
+        );
       }
     }
   }
@@ -170,6 +192,9 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
     `- Orphans: ${orphans}`,
     `- Missing pages: ${missingPages}`,
     `- Contradictions: ${contradictions}`,
+    danglingSupersessions > 0
+      ? `- Dangling supersessions: ${danglingSupersessions}`
+      : "",
     tagLikeLinks > 0
       ? `- Tag-like links (informational, not pages): ${tagLikeLinks}`
       : "",
@@ -236,6 +261,9 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
     `- Orphans: ${orphans}`,
     `- Missing: ${missingPages}`,
     `- Contradictions: ${contradictions}`,
+    danglingSupersessions > 0
+      ? `- Dangling supersessions: ${danglingSupersessions}`
+      : "",
     tagLikeLinks > 0 ? `- Tag-like links (informational): ${tagLikeLinks}` : "",
     sourcePacketLinks > 0 ? `- Source-packet links (informational): ${sourcePacketLinks}` : "",
     autoFix ? `- Missing-page fixes: ${fixesApplied}` : "",

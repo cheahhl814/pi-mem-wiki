@@ -67,6 +67,19 @@ type Scored = {
   ageNote?: string;
 };
 
+/**
+ * pi-mem-wiki fork (v2 follow-up, review low-11): which scored pages may seed
+ * pseudo-relevance expansion? superseded/expired/not-yet-valid pages are
+ * excluded (obsolete vocabulary must not steer the ranking); stale pages still
+ * seed (merely dated, not invalidated). Exported pure for tests.
+ */
+export function prfSeedCandidates<T extends { timeState?: PageTimeState }>(scored: T[]): T[] {
+  return scored.filter(
+    (item) =>
+      item.timeState === undefined || item.timeState === "current" || item.timeState === "stale",
+  );
+}
+
 // ─── Hybrid (lexical + semantic) ranking ─────────────────
 
 /**
@@ -794,8 +807,12 @@ export function searchWiki(
   const expansionTerms = extractExpansionTerms(scored, query, paths, 6);
   if (expansionTerms.length > 0) {
     const expTermList = queryTerms(expansionTerms.join(" "));
-    // Apply expansion scoring to the top 25 results (cheap re-read)
-    const expansionCandidates = scored.slice(0, Math.min(25, scored.length));
+    // Apply expansion scoring to the top 25 results (cheap re-read).
+    // pi-mem-wiki fork (v2 follow-up, review low-11): do not let decayed pages
+    // drive query expansion — superseded/expired/not-yet-valid vocabulary would
+    // pull the ranking toward obsolete content. (stale pages still seed: they
+    // are merely dated, not invalidated.)
+    const expansionCandidates = prfSeedCandidates(scored.slice(0, Math.min(25, scored.length)));
     for (const item of expansionCandidates) {
       const parsed = parsePage(item.pagePath, item.id);
       const body = parsed?.body ?? "";

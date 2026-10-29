@@ -329,11 +329,12 @@ Then call wiki_bootstrap with the inferred topic and mode to finalize the setup.
       // pi-mem-wiki fork (fix 2, review-integrated): scope ambient recall to
       // this project — pages frontmatter-scoped `project:<other-project>` are
       // filtered out; unscoped and `global` pages always match. Project id =
-      // slugified VAULT ROOT basename (review: cwd basename breaks when pi
-      // starts from a subdirectory like myproj/src → "src").
+      // explicit llm-wiki.projectId setting when configured, else slugified
+      // VAULT ROOT basename (review: cwd basename breaks from subdirectories).
+      const ambientProjectId = runtime.config?.projectId ?? slugify(basename(paths.root));
       const results = await searchWikiHybrid(paths, prompt, 3, 5, false, {
         config: runtime.config,
-        scopeFilter: { projectId: slugify(basename(paths.root)) },
+        scopeFilter: { projectId: ambientProjectId },
       });
       if (results.length > 0) {
         // Two-stage gate (issue #68): above the vault-size threshold, inject

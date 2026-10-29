@@ -135,9 +135,19 @@ server.registerTool(
     inputSchema: z.object({
       query: z.string().describe("Search query — use the user's full request or key terms"),
       max_results: z.number().optional().default(5).describe("Max results (default: 5, max: 10)"),
+      include_cold: z
+        .boolean()
+        .optional()
+        .describe(
+          "pi-mem-wiki fork: include archived/cold pages despite the default lifecycle decay (escape hatch),",
+        ),
+      project: z
+        .string()
+        .optional()
+        .describe("pi-mem-wiki fork: project id to scope results to (unscoped + global pages always match)"),
     }),
   },
-  async ({ query, max_results }) => {
+  async ({ query, max_results, include_cold, project }) => {
     if (!hasVault()) {
       return {
         content: [
@@ -151,7 +161,10 @@ server.registerTool(
     }
 
     const paths = getPaths();
-    const result = await recallOperation(paths, query, Math.min(max_results ?? 5, 10));
+    const result = await recallOperation(paths, query, Math.min(max_results ?? 5, 10), {
+      ...(project ? { projectId: project } : {}),
+      ...(include_cold ? { includeCold: true } : {}),
+    });
 
     const detailLines = result.diagnostics.map((d) => `⚠️ ${d.code}: ${d.message}`);
     const detailText = detailLines.length > 0 ? `\n\n${detailLines.join("\n")}` : "";

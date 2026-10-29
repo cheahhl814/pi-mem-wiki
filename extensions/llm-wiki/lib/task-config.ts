@@ -106,6 +106,13 @@ export interface TaskConfig {
   recallSkillInlineMax?: number;
 
   /**
+   * pi-mem-wiki fork (v2 follow-up): explicit project scope id. When set in
+   * namespaced settings, ambient recall scopes to this id verbatim instead of
+   * slugifying the vault-root basename. Leave unset for the automatic default.
+   */
+  projectId?: string;
+
+  /**
    * Surface wiki activity in the UI (issue #77). When enabled (the default),
    * the status line reflects recall hits and the periodic observe/retro
    * reminder is shown to the user (`display: true`) instead of being injected
@@ -298,6 +305,13 @@ function readNamespacedConfig(path: string): Partial<TaskConfig> {
     const weight = section.semanticWeight;
     if (typeof weight === "number" && Number.isFinite(weight)) {
       out.semanticWeight = Math.min(1, Math.max(0, weight));
+    }
+
+    // pi-mem-wiki fork (v2 follow-up): explicit project scope id — when set,
+    // ambient recall uses it verbatim instead of slugifying the vault root
+    // basename (review medium-4's better fix).
+    if (typeof section.projectId === "string" && section.projectId.trim()) {
+      out.projectId = section.projectId.trim();
     }
 
     const threshold = section.recallLinksThreshold;
@@ -539,6 +553,7 @@ const KNOWN_KEYS = [
   "semanticWeight",
   "recallLinksThreshold",
   "recallSkillInlineMax",
+  "projectId", // pi-mem-wiki fork (v2 follow-up): explicit project scope id
   "notices",
   "autoRecall",
   "ambientPersonalVault",
