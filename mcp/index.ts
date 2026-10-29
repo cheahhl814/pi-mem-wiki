@@ -520,6 +520,46 @@ server.registerTool(
   },
 );
 
+// ---- wiki_consolidate (pi-mem-wiki fork v2-b) ----
+
+server.registerTool(
+  "wiki_consolidate",
+  {
+    description:
+      "Proposal-only consolidation scan: clusters un-promoted packets into candidate hub pages, lists stale/supersede and cold-pool demotion candidates, writes ONE proposal under outputs/proposals/. Never edits wiki pages.",
+    inputSchema: z.object({
+      max_clusters: z.number().optional().describe("Max tag clusters to propose (default: 10)"),
+    }),
+  },
+  async ({ max_clusters }) => {
+    if (!hasVault()) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "No wiki vault found. Set WIKI_ROOT or run wiki_bootstrap first.",
+          },
+        ],
+        isError: true,
+      };
+    }
+    const paths = getPaths();
+    const result = await consolidateOperation(paths, max_clusters ?? 10);
+    if (!result.ok) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Vault error: ${result.diagnostics[0].message}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    return { content: [{ type: "text" as const, text: result.report }] };
+  },
+);
+
 // ---- wiki_log_event ----
 
 server.registerTool(

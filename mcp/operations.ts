@@ -30,6 +30,7 @@ import {
   type WikilinkValidationMode,
 } from "../extensions/llm-wiki/lib/knowledge-links.js";
 import { runWikiLint } from "../extensions/llm-wiki/lib/lint.js";
+import { runConsolidate } from "../extensions/llm-wiki/lib/consolidate.js";
 import {
   appendEvent,
   type ProjectionResult,
@@ -432,6 +433,28 @@ export async function lintOperation(
   }
   const report = await runWikiLint(paths, autoFix);
   return { ok: true, report };
+}
+
+/**
+ * pi-mem-wiki fork (v2-b): shared proposal-only consolidation scan — the exact
+ * Pi wiki_consolidate work, run synchronously. Never writes wiki pages.
+ */
+export async function consolidateOperation(
+  paths: VaultPaths,
+  maxClusters = 10,
+): Promise<
+  | { ok: true; report: string; proposalPath: string }
+  | { ok: false; diagnostics: Array<{ code: string; message: string }> }
+> {
+  const vaultCheck = inspectWritableVault(paths);
+  if (!vaultCheck.ok) {
+    return {
+      ok: false,
+      diagnostics: vaultCheck.diagnostics.map((d) => ({ code: d.code, message: d.message })),
+    };
+  }
+  const result = runConsolidate(paths, { maxClusters });
+  return { ok: true, report: result.report, proposalPath: result.proposalPath };
 }
 
 /**

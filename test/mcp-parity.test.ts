@@ -274,6 +274,7 @@ describe("MCP parity with shared services", () => {
       "wiki_capture_source",
       "wiki_ensure_page",
       "wiki_lint",
+      "wiki_consolidate", // pi-mem-wiki fork v2-b
       "wiki_log_event",
       "wiki_observe",
       "wiki_rebuild_meta",

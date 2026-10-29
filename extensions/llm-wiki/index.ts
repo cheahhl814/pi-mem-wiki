@@ -35,6 +35,7 @@ import {
 import {
   registerWikiBootstrap,
   registerWikiCaptureSource,
+  registerWikiConsolidate,
   registerWikiEnsurePage,
   registerWikiIngest,
   registerWikiLint,
@@ -109,6 +110,7 @@ export default function (pi: ExtensionAPI) {
   registerWikiIngest(pi, runtime);
   registerWikiEnsurePage(pi, runtime);
   registerWikiSearch(pi);
+  registerWikiConsolidate(pi, runtime);
   registerWikiLint(pi, runtime);
   registerWikiStatus(pi);
   registerWikiRebuildMeta(pi, runtime);

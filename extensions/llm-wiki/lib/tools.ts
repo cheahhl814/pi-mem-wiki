@@ -14,6 +14,7 @@ import {
 } from "./knowledge-document.js";
 import { applyWikilinkGate, buildWikilinkIndex } from "./knowledge-links.js";
 import { runWikiLint } from "./lint.js";
+import { runConsolidate } from "./consolidate.js";
 import { appendEvent, type Registry, rebuildMetadata, rebuildMetadataLight } from "./metadata.js";
 import { reindexQmdVault } from "./qmd-indexing.js";
 import type { Runtime } from "./runtime.js";
@@ -904,6 +905,56 @@ export function registerWikiLint(pi: ExtensionAPI, runtime?: Runtime): void {
  * Run the wiki health scan (issue #77 extracted it from the tool body so it can
  * run off-thread via `dispatchReported`). Returns the human-readable summary.
  */
+// ─── 6b. wiki_consolidate (pi-mem-wiki fork v2-b) ─────
+
+export function registerWikiConsolidate(pi: ExtensionAPI, runtime?: Runtime): void {
+  pi.registerTool({
+    name: "wiki_consolidate",
+    label: "Wiki Consolidate",
+    description:
+      "Proposal-only consolidation scan: clusters un-promoted packets into candidate hub pages, lists stale/supersede candidates and cold-pool demotion candidates, and writes ONE proposal artifact under outputs/proposals/. Never edits wiki pages.",
+    promptSnippet: "Draft a consolidation proposal (nothing is applied)",
+    promptGuidelines: [
+      "Use wiki_consolidate to prepare the episodic-to-durable distillation pass.",
+      "The tool NEVER writes wiki pages — applying the proposal is a separate, human-approved step.",
+    ],
+    parameters: Type.Object({
+      max_clusters: Type.Optional(
+        Type.Number({ description: "Max tag clusters to propose (default: 10)", default: 10 }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const paths = getPaths(ctx.cwd);
+      const vaultCheck = inspectWritableVault(paths);
+      if (!vaultCheck.ok) {
+        return {
+          content: [
+            { type: "text", text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}` },
+          ],
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
+          isError: true,
+        };
+      }
+      // Full-vault scan is O(pages): run in the background and report (issue #77
+      // pattern, mirrors wiki_lint).
+      return dispatchReported(runtime, ctx as ToolCtx, {
+        label: `consolidate:${paths.root}`,
+        started:
+          "\u{1F9E9} LLM Wiki: consolidation scan started in the background — the proposal will be posted with your next message.",
+        work: async () => {
+          const result = runConsolidate(paths, {
+            maxClusters: params.max_clusters ?? 10,
+          });
+          return `\u{1F9E9} **Consolidation proposal written** (proposal-only — nothing applied)\n\n- Pages scanned: ${result.counts.pages}\n- Un-promoted packets: ${result.counts.unPromoted}\n- Stale pages: ${result.counts.stale}\n- Cold-pool candidates: ${result.counts.coldPoolCandidates}\n- Tag clusters (≥3 packets): ${result.counts.clusters}\n\n📄 Proposal: \`${result.proposalPath}\``;
+        },
+      });
+    },
+  });
+}
+
 // ─── 7. wiki_status ─────────────────────────────────────
 
 export function registerWikiStatus(pi: ExtensionAPI): void {
