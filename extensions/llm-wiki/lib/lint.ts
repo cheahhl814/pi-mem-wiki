@@ -14,6 +14,20 @@ import {
 } from "./vault-format.js";
 
 /**
+ * pi-mem-wiki fork: resolve an unresolved link target into a class before it
+ * becomes a lint finding.
+ *  - "tag": bare single-token wikilinks ([[notion]]) — tag-like references, not pages.
+ *  - "source-ref": raw/** paths into immutable source-packet stores.
+ *  - "page": anything else that should resolve to a wiki page.
+ */
+export function classifyUnresolvedTarget(target: string): "tag" | "source-ref" | "page" {
+  const cleaned = target.trim().replace(/\\$/, "");
+  if (!cleaned.includes("/")) return "tag";
+  if (cleaned === "raw" || cleaned.startsWith("raw/")) return "source-ref";
+  return "page";
+}
+
+/**
  * Wiki health scan. Extracted verbatim from tools.ts (issue #77) so the Pi tool
  * and the MCP server run the exact same lint implementation (Phase 1 of #221).
  */
@@ -63,16 +77,28 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
   const findings: string[] = [];
   let missingPages = 0;
   let contradictions = 0;
+  // pi-mem-wiki fork: classify unresolved targets before they become findings.
+  // Bare tokens (no "dir/" prefix) are tag-like references, and "raw/**" targets
+  // are immutable source-packet paths — neither is a missing PAGE, so neither
+  // counts toward the missing-page total nor is ever stub-able by auto-fix.
+  let tagLikeLinks = 0;
+  let sourcePacketLinks = 0;
 
   for (const page of pages) {
     const resolved = buildResolvedBacklinks(page.id, page.body, wikilinkIndex);
     for (const target of resolved.targets) inbound[target]++;
     for (const unresolved of resolved.unresolved) {
-      const sources = gapSources.get(unresolved.target) ?? new Set<string>();
-      sources.add(page.id);
-      gapSources.set(unresolved.target, sources);
-      missingPages++;
-      findings.push(`Missing page: ${unresolved.target} (in ${page.id})`);
+      if (classifyUnresolvedTarget(unresolved.target) === "tag") {
+        tagLikeLinks++;
+      } else if (classifyUnresolvedTarget(unresolved.target) === "source-ref") {
+        sourcePacketLinks++;
+      } else {
+        const sources = gapSources.get(unresolved.target) ?? new Set<string>();
+        sources.add(page.id);
+        gapSources.set(unresolved.target, sources);
+        missingPages++;
+        findings.push(`Missing page: ${unresolved.target} (in ${page.id})`);
+      }
     }
     for (const d of resolved.diagnostics) {
       if (d.code === "link_ambiguous") {
@@ -100,13 +126,11 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
   if (autoFix) {
     for (const gap of gaps) {
       if (gap.mentionedBy.length < 2) continue;
+      // pi-mem-wiki fork: only folder-qualified concepts/ targets are stub-able.
+      // Upstream also accepted bare tokens here ("[[notion]]" → concepts/notion.md),
+      // which is how junk stub pages were minted from tag-like links.
       const parts = gap.topic.split("/");
-      const name =
-        parts.length === 1
-          ? parts[0]
-          : parts.length === 2 && parts[0] === "concepts"
-            ? parts[1]
-            : "";
+      const name = parts.length === 2 && parts[0] === "concepts" ? parts[1] : "";
       if (!name || slugify(name) !== name) continue;
       const pagePath = join(paths.wiki, "concepts", `${name}.md`);
       mkdirSync(join(paths.wiki, "concepts"), { recursive: true });
@@ -144,6 +168,12 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
     `- Orphans: ${orphans}`,
     `- Missing pages: ${missingPages}`,
     `- Contradictions: ${contradictions}`,
+    tagLikeLinks > 0
+      ? `- Tag-like links (informational, not pages): ${tagLikeLinks}`
+      : "",
+    sourcePacketLinks > 0
+      ? `- Source-packet links (informational): ${sourcePacketLinks}`
+      : "",
     autoFix ? `- Missing-page fixes applied: ${fixesApplied}` : "",
     repair?.repaired ? `- Legacy pages repaired: ${repair.repaired}` : "",
     repair?.manifestPath ? `- Repair manifest: ${repair.manifestPath}` : "",
@@ -204,6 +234,8 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
     `- Orphans: ${orphans}`,
     `- Missing: ${missingPages}`,
     `- Contradictions: ${contradictions}`,
+    tagLikeLinks > 0 ? `- Tag-like links (informational): ${tagLikeLinks}` : "",
+    sourcePacketLinks > 0 ? `- Source-packet links (informational): ${sourcePacketLinks}` : "",
     autoFix ? `- Missing-page fixes: ${fixesApplied}` : "",
     repair?.repaired ? `- Legacy pages repaired: ${repair.repaired}` : "",
     "",
