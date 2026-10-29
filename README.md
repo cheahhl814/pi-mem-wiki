@@ -16,8 +16,8 @@
 **English** | <a href="./README.zh.md">中文</a> | <a href="./README.es.md">Español</a> | <a href="./README.ja.md">日本語</a> | <a href="./README.de.md">Deutsch</a> | <a href="./README.fr.md">Français</a> | <a href="./README.pt.md">Português</a> | <a href="./README.ru.md">Русский</a> | <a href="./README.ko.md">한국어</a> | <a href="./README.hi.md">हिंदी</a>
 
 [![CI](https://github.com/zosmaai/pi-llm-wiki/actions/workflows/ci.yml/badge.svg)](https://github.com/zosmaai/pi-llm-wiki/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@zosmaai/pi-llm-wiki)](https://www.npmjs.com/package/@zosmaai/pi-llm-wiki)
-[![npm downloads](https://img.shields.io/npm/dm/@zosmaai/pi-llm-wiki)](https://www.npmjs.com/package/@zosmaai/pi-llm-wiki)
+[![npm](https://img.shields.io/npm/v/@cheahhl814/pi-mem-wiki)](https://www.npmjs.com/package/@cheahhl814/pi-mem-wiki)
+[![npm downloads](https://img.shields.io/npm/dm/@zosmaai/pi-llm-wiki)](https://www.npmjs.com/package/@cheahhl814/pi-mem-wiki)
 [![Coverage](https://img.shields.io/badge/coverage-85.09%25-brightgreen.svg)](https://codecov.io/gh/zosmaai/pi-llm-wiki)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-blue.svg)](https://zosmaai.github.io/pi-llm-wiki/)
@@ -62,7 +62,7 @@ Start with a new OKF vault, or point pi-llm-wiki at an existing vault and adopt 
 **pi** ([`@mariozechner/pi-coding-agent`](https://github.com/badlogic/pi-mono)):
 
 ```bash
-pi install npm:@zosmaai/pi-llm-wiki
+pi install npm:@cheahhl814/pi-mem-wiki
 ```
 
 If npm 12 prints audit findings or an `install-scripts` warning during this
@@ -77,7 +77,7 @@ gives the one-line fix.
 **oh-my-pi** ([`omp`](https://github.com/can1357/oh-my-pi)):
 
 ```bash
-omp install @zosmaai/pi-llm-wiki
+omp install @cheahhl814/pi-mem-wiki
 ```
 
 Both hosts load the same extension, skill, and `/wiki-*` slash commands — see
@@ -98,7 +98,7 @@ For every other MCP client, install the package and register
 `dist/mcp/index.js` as a local stdio server:
 
 ```bash
-npm install --save-dev @zosmaai/pi-llm-wiki@latest
+npm install --save-dev @cheahhl814/pi-mem-wiki@latest
 ```
 
 If that install warns that install scripts were blocked, the `node-llama-cpp`
@@ -435,10 +435,10 @@ The package ships a standalone MCP server exposing 15 wiki tools over stdio:
 
 ```bash
 # Auto-discovered by pi:
-pi install npm:@zosmaai/pi-llm-wiki
+pi install npm:@cheahhl814/pi-mem-wiki
 
 # Standalone with any MCP client:
-WIKI_ROOT=~/my-wiki node node_modules/@zosmaai/pi-llm-wiki/dist/mcp/index.js
+WIKI_ROOT=~/my-wiki node node_modules/@cheahhl814/pi-mem-wiki/dist/mcp/index.js
 ```
 
 Set `WIKI_ROOT` to your wiki vault directory. If unset, the server auto-detects from the current working directory.
@@ -460,7 +460,7 @@ The same server as an entry in `.mcp.json` (Claude Code) or `claude_desktop_conf
   "mcpServers": {
     "llm-wiki": {
       "command": "node",
-      "args": ["/absolute/path/to/node_modules/@zosmaai/pi-llm-wiki/dist/mcp/index.js"],
+      "args": ["/absolute/path/to/node_modules/@cheahhl814/pi-mem-wiki/dist/mcp/index.js"],
       "env": { "WIKI_ROOT": "/absolute/path/to/my-wiki" }
     }
   }
@@ -519,7 +519,7 @@ cannot be declared with a relative path. Register it explicitly instead:
   "mcpServers": {
     "llm-wiki": {
       "command": "node",
-      "args": ["/abs/path/to/node_modules/@zosmaai/pi-llm-wiki/dist/mcp/index.js"],
+      "args": ["/abs/path/to/node_modules/@cheahhl814/pi-mem-wiki/dist/mcp/index.js"],
       "env": { "WIKI_ROOT": "/abs/path/to/your/wiki" }
     }
   }

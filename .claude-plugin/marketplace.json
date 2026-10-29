@@ -1,17 +1,28 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
-  "name": "zosmaai",
+  "name": "cheahhl814",
   "version": "1.0.0",
-  "description": "Zosma AI plugins for knowledge work and durable project memory.",
-  "owner": { "name": "Zosma AI", "url": "https://github.com/zosmaai" },
+  "description": "cheahhl814 plugins for durable agent memory.",
+  "owner": {
+    "name": "cheahhl814",
+    "url": "https://github.com/cheahhl814"
+  },
   "plugins": [
     {
-      "name": "llm-wiki",
-      "displayName": "LLM Wiki",
-      "description": "A self-maintaining, Obsidian-compatible LLM wiki with MCP tools and Claude guardrails.",
-      "source": { "source": "npm", "package": "@zosmaai/pi-llm-wiki" },
+      "name": "pi-mem-wiki",
+      "displayName": "Pi Mem Wiki",
+      "description": "Agentic memory fork of zosmaai/pi-llm-wiki: an Obsidian-compatible LLM wiki with MCP tools and hardened lint/scoping/time semantics.",
+      "source": {
+        "source": "npm",
+        "package": "@cheahhl814/pi-mem-wiki"
+      },
       "category": "productivity",
-      "keywords": ["wiki", "memory", "mcp", "knowledge-base"]
+      "keywords": [
+        "wiki",
+        "memory",
+        "mcp",
+        "knowledge-base"
+      ]
     }
   ]
 }

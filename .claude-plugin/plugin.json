@@ -1,10 +1,13 @@
 {
-  "name": "llm-wiki",
-  "displayName": "LLM Wiki",
+  "name": "pi-mem-wiki",
+  "displayName": "Pi Mem Wiki",
   "version": "0.6.3",
-  "description": "Self-maintaining LLM wiki (Karpathy pattern): recall, observe, retro, capture sources, ensure pages, lint, and ingest. 15 tools over MCP.",
-  "author": { "name": "Zosma AI", "url": "https://github.com/zosmaai" },
-  "repository": "https://github.com/zosmaai/pi-llm-wiki",
+  "description": "Agentic memory fork of zosmaai/pi-llm-wiki (Karpathy pattern): recall, observe, retro, capture, ensure pages, hardened lint, and ingest. 15 tools over MCP.",
+  "author": {
+    "name": "cheahhl814",
+    "url": "https://github.com/cheahhl814"
+  },
+  "repository": "https://github.com/cheahhl814/pi-mem-wiki",
   "license": "MIT",
   "mcpServers": "./.mcp.json",
   "hooks": "./hooks/hooks.json"

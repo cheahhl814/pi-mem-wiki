@@ -18,7 +18,7 @@ function readProductionFiles(directory: string): string[] {
 describe("package structure", () => {
   it("should have a valid package.json with pi manifest", () => {
     const pkg = JSON.parse(readFile(join(rootDir, "package.json")));
-    expect(pkg.name).toBe("@zosmaai/pi-llm-wiki");
+    expect(pkg.name).toBe("@cheahhl814/pi-mem-wiki");
     expect(pkg.keywords).toContain("pi-package");
     expect(pkg.pi.extensions).toContain("./extensions");
     expect(pkg.pi.skills).toContain("./skills");
@@ -84,10 +84,10 @@ describe("package structure", () => {
       expect(pkg.files).toContain(path);
     }
     expect(marketplace.plugins).toContainEqual({
-      name: "llm-wiki",
-      displayName: "LLM Wiki",
+      name: "pi-mem-wiki",
+      displayName: "Pi Mem Wiki",
       description:
-        "A self-maintaining, Obsidian-compatible LLM wiki with MCP tools and Claude guardrails.",
+        "Agentic memory fork of zosmaai/pi-llm-wiki: an Obsidian-compatible LLM wiki with MCP tools and hardened lint/scoping/time semantics.",
       source: { source: "npm", package: pkg.name },
       category: "productivity",
       keywords: ["wiki", "memory", "mcp", "knowledge-base"],
@@ -350,8 +350,9 @@ describe("package structure", () => {
 
   it("should have a comprehensive README with install instructions", () => {
     const readme = readFile(join(rootDir, "README.md"));
-    expect(readme).toContain("@zosmaai/pi-llm-wiki");
-    expect(readme).toContain("pi install npm:@zosmaai/pi-llm-wiki");
+    expect(readme).toContain("@cheahhl814/pi-mem-wiki");
+    expect(readme).toContain("pi install npm:@cheahhl814/pi-mem-wiki");
+    expect(readme).toContain("@zosmaai/pi-llm-wiki"); // fork attribution must stay
     expect(readme).toContain("Karpathy");
     expect(readme).toContain("Obsidian");
   });
@@ -374,7 +375,7 @@ describe("package structure", () => {
     const entry = (pkg.pi.mcpservers["llm-wiki"] as string).replace(/^node\s+\.\//, "");
     expect(entry).toBe("dist/mcp/index.js");
 
-    const documented = /@zosmaai\/pi-llm-wiki\/\S*mcp\/index\.js/g;
+    const documented = /@cheahhl814\/pi-mem-wiki\/\S*mcp\/index\.js/g;
     const english = readFile(join(rootDir, "README.md"));
     expect([...english.matchAll(documented)].length).toBeGreaterThan(0);
 
