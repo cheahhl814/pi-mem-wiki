@@ -60,6 +60,8 @@ type Scored = {
   /** pi-mem-wiki fork (fix 4): time-validity data, penalty applied after fusion. */
   timeState?: PageTimeState;
   timePenalty?: number;
+  /** pi-mem-wiki fork (v2-a): lifecycle cold-pool decay (1 or 0.1). */
+  lifecyclePenalty?: number;
   ageDays?: number;
   ageNote?: string;
 };
@@ -565,7 +567,8 @@ export function searchWiki(
   semantic?: SemanticContext,
   /** pi-mem-wiki fork (fix 2): project scoping — pages scoped `project:<x>` are
    * skipped unless x matches; `global` and unscoped pages always match. */
-  scopeFilter?: { projectId?: string },
+  /** pi-mem-wiki fork (v2-a): includeCold — do NOT decay archived/cold pages. */
+  scopeFilter?: { projectId?: string; includeCold?: boolean },
 ): RecallResult[] {
   const registry = readJson<Registry>(join(paths.meta, "registry.json"), {
     version: "1.0",
@@ -672,14 +675,22 @@ export function searchWiki(
 
     // pi-mem-wiki fork (fix 4): evaluate time validity once per candidate.
     // Time fields may be non-standard frontmatter (superseded_by, valid_from,
-    // valid_until), which parsePage does NOT surface — but buildRegistry copies
-    // doc.extensions into the registry entry, so prefer entry values.
+    // valid_until); they now parse as standard fields on the fork, with the
+    // registry entry kept as fallback for vaults built before this change.
     const timeFields: Record<string, unknown> = { ...frontmatter };
     for (const key of ["superseded_by", "valid_from", "valid_until", "stale_after"] as const) {
       const fromEntry = (entry as Record<string, unknown>)[key];
       if (fromEntry !== undefined) timeFields[key] = fromEntry;
     }
     const timeInfo = evaluatePageTime(timeFields);
+    // pi-mem-wiki fork (v2-a): lifecycle cold pool — archived/cold pages decay
+    // x0.1 so they leave the effective candidate set; escape hatch includeCold.
+    const rawLifecycle = frontmatter.lifecycle ?? (entry as Record<string, unknown>).lifecycle;
+    const lifecycle = typeof rawLifecycle === "string" ? rawLifecycle.trim() : "";
+    const lifecyclePenalty =
+      !(scopeFilter?.includeCold === true) && (lifecycle === "archived" || lifecycle === "cold")
+        ? 0.1
+        : 1;
     const updatedDate = parseIsoDate(frontmatter.updated);
     const ageDays = updatedDate
       ? Math.floor((Date.now() - updatedDate.getTime()) / DAY_MS)
@@ -695,6 +706,7 @@ export function searchWiki(
         semCos,
         timeState: timeInfo.state,
         timePenalty: TIME_PENALTY[timeInfo.state],
+        lifecyclePenalty,
         ageDays,
         ageNote: timeInfo.note,
       });
@@ -746,10 +758,14 @@ export function searchWiki(
   // pi-mem-wiki fork (fix 4): time decay, applied dead last so neither PRF
   // expansion nor semantic fusion can resurrect a decayed page past a current
   // one. Ranking-only — decay supersedes, never deletes (history queries like
-  // "why did we decide X in July" stay answerable).
+  // "why did we decide X in July" stay answerable). v2-a: lifecycle cold pool
+  // (archived/cold) decays x0.1 unless scopeFilter.includeCold is set.
   for (const item of scored) {
-    if (item.timePenalty !== undefined && item.timePenalty !== 1) {
-      item.score *= item.timePenalty;
+    const penalty =
+      (item.timePenalty !== undefined ? item.timePenalty : 1) *
+      (item.lifecyclePenalty !== undefined ? item.lifecyclePenalty : 1);
+    if (penalty !== 1) {
+      item.score *= penalty;
     }
   }
 
@@ -806,7 +822,7 @@ export function searchWikiLayered(
   includePersonal = true,
   semantic?: SemanticContext,
   /** pi-mem-wiki fork (fix 2): see searchWiki. */
-  scopeFilter?: { projectId?: string },
+  scopeFilter?: { projectId?: string; includeCold?: boolean },
 ): RecallResult[] {
   // Search primary vault
   const primaryResults = searchWiki(primaryPaths, query, maxResults, minScore, semantic, scopeFilter);
@@ -929,7 +945,7 @@ export async function searchWikiHybrid(
     config?: TaskConfig;
     embedder?: Embedder;
     /** pi-mem-wiki fork (fix 2): see searchWiki. */
-    scopeFilter?: { projectId?: string };
+    scopeFilter?: { projectId?: string; includeCold?: boolean };
   } = {},
 ): Promise<RecallResult[]> {
   // Pure-lexical fast path: no semantic signal anywhere => no embedding call.
@@ -1220,6 +1236,12 @@ export function registerWikiRecall(pi: ExtensionAPI, runtime?: Runtime): void {
       max_results: Type.Optional(
         Type.Number({ description: "Max results (default: 5, max: 10)", default: 5 }),
       ),
+      include_cold: Type.Optional(
+        Type.Boolean({
+          description:
+            "pi-mem-wiki fork: include archived/cold pages despite the default lifecycle decay (recall escape hatch),",
+        }),
+      ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = resolveVaultPaths(ctx.cwd ?? process.cwd());
@@ -1248,6 +1270,7 @@ export function registerWikiRecall(pi: ExtensionAPI, runtime?: Runtime): void {
       if (runtime) runtime.ensureConfig(ctx.cwd ?? paths.root);
       const results = await searchWikiHybrid(paths, params.query, maxResults, 0, true, {
         config: runtime?.config,
+        scopeFilter: { includeCold: params.include_cold === true },
       });
 
       if (results.length === 0) {

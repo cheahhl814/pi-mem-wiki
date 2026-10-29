@@ -171,6 +171,12 @@ function buildRegistry(paths: VaultPaths, documents: KnowledgeDocument[]): Regis
       "recall_triggers",
       "status",
       "stale_after",
+      // pi-mem-wiki fork: memory-lifecycle fields (v2)
+      "lifecycle",
+      "scope",
+      "valid_from",
+      "valid_until",
+      "superseded_by",
       "resource",
       "generated",
       "verified",

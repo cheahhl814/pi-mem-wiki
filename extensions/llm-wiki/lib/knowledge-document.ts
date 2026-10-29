@@ -78,6 +78,12 @@ export interface KnowledgeFrontmatter {
   domain?: KnowledgeValue;
   aliases?: KnowledgeValue;
   recall_triggers?: KnowledgeValue;
+  // pi-mem-wiki fork: memory-lifecycle fields (v2 — packet ladder + time semantics)
+  lifecycle?: KnowledgeValue;
+  scope?: KnowledgeValue;
+  valid_from?: KnowledgeValue;
+  valid_until?: KnowledgeValue;
+  superseded_by?: KnowledgeValue;
   created?: KnowledgeValue;
   updated?: KnowledgeValue;
   summary?: KnowledgeValue;
@@ -126,6 +132,11 @@ export interface KnowledgePatchFields {
   domain?: KnowledgeValue;
   aliases?: KnowledgeValue;
   recall_triggers?: KnowledgeValue;
+  lifecycle?: KnowledgeValue;
+  scope?: KnowledgeValue;
+  valid_from?: KnowledgeValue;
+  valid_until?: KnowledgeValue;
+  superseded_by?: KnowledgeValue;
   created?: KnowledgeValue;
   updated?: KnowledgeValue;
   summary?: KnowledgeValue;
@@ -153,6 +164,12 @@ const STANDARD_FIELDS = new Set([
   "domain",
   "aliases",
   "recall_triggers",
+  // pi-mem-wiki fork: memory-lifecycle fields (v2)
+  "lifecycle",
+  "scope",
+  "valid_from",
+  "valid_until",
+  "superseded_by",
   "created",
   "updated",
   "summary",
