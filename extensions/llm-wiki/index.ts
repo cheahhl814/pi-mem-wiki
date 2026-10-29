@@ -23,6 +23,7 @@ import {
 import { registerWikiRetro } from "./lib/retro.js";
 import { registerBackgroundRuntime } from "./lib/runtime.js";
 import { registerWikiSettingsCommand } from "./lib/settings-command.js";
+import { slugify } from "./lib/utils.js";
 import {
   autoRecallEnabled,
   loadTaskConfig,
@@ -321,8 +322,13 @@ Then call wiki_bootstrap with the inferred topic and mode to finalize the setup.
       // query embedding); degrades to pure lexical otherwise. minScore=5 still
       // gates noise — a semantic-only match must be strongly relevant to pass.
       runtime.ensureConfig(process.cwd());
+      // pi-mem-wiki fork (fix 2): scope ambient recall to this project — pages
+      // frontmatter-scoped `project:<other-project>` are filtered out; unscoped
+      // and `global` pages always match. Project id = slugified cwd basename
+      // (the same convention the vault's own project dir uses).
       const results = await searchWikiHybrid(paths, prompt, 3, 5, false, {
         config: runtime.config,
+        scopeFilter: { projectId: slugify(basename(process.cwd())) },
       });
       if (results.length > 0) {
         // Two-stage gate (issue #68): above the vault-size threshold, inject

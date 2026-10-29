@@ -461,6 +461,9 @@ export function searchWiki(
   maxResults = 5,
   minScore = 0,
   semantic?: SemanticContext,
+  /** pi-mem-wiki fork (fix 2): project scoping — pages scoped `project:<x>` are
+   * skipped unless x matches; `global` and unscoped pages always match. */
+  scopeFilter?: { projectId?: string },
 ): RecallResult[] {
   const registry = readJson<Registry>(join(paths.meta, "registry.json"), {
     version: "1.0",
@@ -486,6 +489,19 @@ export function searchWiki(
     if (pageExists && !parsed) continue;
     const frontmatter = parsed?.frontmatter ?? {};
     const body = parsed?.body ?? "";
+
+    // pi-mem-wiki fork (fix 2): project-scoped pages recall only when the
+    // query's project matches. Unscoped and `global` pages are unrestricted.
+    // scope is a non-standard frontmatter field, so it reaches us via the
+    // registry entry (buildRegistry copies doc.extensions into entries).
+    if (scopeFilter?.projectId) {
+      const rawScope = frontmatter.scope ?? (entry as Record<string, unknown>).scope;
+      const pageScope = typeof rawScope === "string" ? rawScope.trim() : "";
+      if (pageScope.startsWith("project:")) {
+        const pageProject = pageScope.slice("project:".length).trim();
+        if (pageProject && pageProject !== scopeFilter.projectId) continue;
+      }
+    }
 
     let score = 0;
 
@@ -646,19 +662,23 @@ export function searchWikiLayered(
   minScore = 0,
   includePersonal = true,
   semantic?: SemanticContext,
+  /** pi-mem-wiki fork (fix 2): see searchWiki. */
+  scopeFilter?: { projectId?: string },
 ): RecallResult[] {
   // Search primary vault
-  const primaryResults = searchWiki(primaryPaths, query, maxResults, minScore, semantic);
+  const primaryResults = searchWiki(primaryPaths, query, maxResults, minScore, semantic, scopeFilter);
 
   // If primary is already the personal vault, no layered search needed
   if (isPersonalVault(primaryPaths)) return primaryResults;
 
-  // Search personal vault as secondary layer (only when explicitly requested)
+  // Search personal vault as secondary layer (only when explicitly requested).
+  // pi-mem-wiki fork (fix 2): the scope filter never applies to the personal
+  // vault — its pages follow the caller's own vault, not this one's project.
   let personalResults: RecallResult[] = [];
   if (includePersonal) {
     const personalPaths = getPersonalWikiPaths();
     if (existsSync(join(personalPaths.dotWiki, "config.json"))) {
-      personalResults = searchWiki(personalPaths, query, maxResults, minScore, semantic);
+      personalResults = searchWiki(personalPaths, query, maxResults, minScore, semantic, scopeFilter);
     }
   }
 
@@ -747,7 +767,12 @@ export async function searchWikiHybrid(
   maxResults = 5,
   minScore = 0,
   includePersonal = true,
-  opts: { config?: TaskConfig; embedder?: Embedder } = {},
+  opts: {
+    config?: TaskConfig;
+    embedder?: Embedder;
+    /** pi-mem-wiki fork (fix 2): see searchWiki. */
+    scopeFilter?: { projectId?: string };
+  } = {},
 ): Promise<RecallResult[]> {
   // Pure-lexical fast path: no semantic signal anywhere => no embedding call.
   let anyEmbeddings = storeHasEntries(primaryPaths);
@@ -758,14 +783,14 @@ export async function searchWikiHybrid(
     }
   }
   if (!anyEmbeddings) {
-    return searchWikiLayered(primaryPaths, query, maxResults, minScore, includePersonal);
+    return searchWikiLayered(primaryPaths, query, maxResults, minScore, includePersonal, undefined, opts.scopeFilter);
   }
 
   const embedder = opts.embedder ?? (opts.config ? resolveEmbedder(opts.config) : undefined);
   if (!embedder) {
     // Embeddings exist but no embedder configured to embed the query: fall back
     // to pure lexical rather than guess. (Degrades gracefully.)
-    return searchWikiLayered(primaryPaths, query, maxResults, minScore, includePersonal);
+    return searchWikiLayered(primaryPaths, query, maxResults, minScore, includePersonal, undefined, opts.scopeFilter);
   }
 
   let semantic: SemanticContext | undefined;
@@ -780,7 +805,7 @@ export async function searchWikiHybrid(
     semantic = undefined;
   }
 
-  return searchWikiLayered(primaryPaths, query, maxResults, minScore, includePersonal, semantic);
+  return searchWikiLayered(primaryPaths, query, maxResults, minScore, includePersonal, semantic, opts.scopeFilter);
 }
 
 /**
