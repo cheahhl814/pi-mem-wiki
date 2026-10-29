@@ -86,6 +86,10 @@ ${input.content}
       title: `Observation: ${input.title}`,
       slug,
       status: "observation",
+      // pi-mem-wiki fork (v2-c): capture-side gate — every observation enters
+      // the lifecycle ladder at "captured" so consolidation (wiki_consolidate)
+      // and cold-pool decay have a definite root state to work from.
+      lifecycle: "captured",
       created: today,
       updated: today,
       relevance: input.relevance,
@@ -153,7 +157,8 @@ export function registerWikiObserve(
       "compounds the wiki's knowledge across sessions.",
     promptSnippet: "Record an observation about the current work",
     promptGuidelines: [
-      "Call wiki_observe after non-trivial decisions, discoveries, or completions.",
+      "GATE before calling: a future session must ACT differently knowing this; if not, skip the observation.",
+      "Call wiki_observe only after non-trivial decisions, discoveries, or completions that pass the gate.",
       "One observation per call. Use multiple calls for multiple observations.",
       "Rate relevance honestly — most observations are medium or low, not critical.",
       "Observations compound across sessions via wiki_recail.",
