@@ -25,6 +25,7 @@ import { createExecApi } from "./exec.js";
 import {
   bootstrapOperation,
   captureSourceOperation,
+  consolidateOperation,
   ensurePageOperation,
   ingestOperation,
   lintOperation,

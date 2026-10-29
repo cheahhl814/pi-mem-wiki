@@ -95,6 +95,7 @@ it("starts the published MCP command, exposes all 15 tools, and invokes operatio
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "wiki_bootstrap",
       "wiki_capture_source",
+      "wiki_consolidate", // pi-mem-wiki fork v2-b
       "wiki_ensure_page",
       "wiki_ingest",
       "wiki_lint",
