@@ -14,6 +14,7 @@ import {
 } from "./lib/observation.js";
 import { recoverQmdIndex } from "./lib/qmd-indexing.js";
 import {
+  cjkQueryDegrades,
   formatRecallContext,
   registerWikiRecall,
   searchWikiHybrid,
@@ -340,6 +341,21 @@ Then call wiki_bootstrap with the inferred topic and mode to finalize the setup.
           linksOnly,
           skillInlineMax: runtime.config?.recallSkillInlineMax,
         });
+        // pi-mem-wiki fork (fix 3): loud degradation notice. A CJK query that
+        // returns zero hits on a vault with no semantic index is a known,
+        // by-construction lexical gap (cross-script matching needs vectors);
+        // surface it instead of a silent empty recall.
+        if (
+          results.length === 0 &&
+          cjkQueryDegrades(paths, prompt) &&
+          ctx?.hasUI &&
+          noticesEnabled(runtime.config)
+        ) {
+          ctx.ui.setStatus(
+            "llm-wiki",
+            "\u{1F9E0} CJK query matched nothing — semantic index unconfigured, so cross-script recall is degraded. Configure an embedder and run wiki_reindex_embeddings.",
+          );
+        }
         if (recallContext) {
           dynamicContext += `\n\n${recallContext}`;
         }

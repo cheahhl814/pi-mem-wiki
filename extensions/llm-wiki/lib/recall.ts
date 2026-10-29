@@ -731,6 +731,21 @@ function storeHasEntries(paths: VaultPaths): boolean {
 }
 
 /**
+ * pi-mem-wiki fork (fix 3): does a CJK query degrade on this vault?
+ *
+ * The lexical path handles CJK→CJK matching via character n-grams
+ * (queryTerms), but a CJK query against vault content in another script
+ * (e.g. an English-only body) has NO lexical bridge by construction — that
+ * bridging is the semantic index's job. So when the query is CJK and the
+ * vault has no embedding store, recall is degraded and callers should say
+ * so loudly rather than silently returning zero hits.
+ */
+export function cjkQueryDegrades(paths: VaultPaths, query: string): boolean {
+  if (!CJK_RE.test(query)) return false;
+  return !storeHasEntries(paths);
+}
+
+/**
  * Embed the query string once (cached), returning a normalized vector, or
  * `undefined` when no embedder is configured or the call yields nothing.
  */
