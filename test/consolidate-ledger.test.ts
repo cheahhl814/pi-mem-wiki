@@ -105,6 +105,26 @@ describe("consolidation ledger (fork M3, measure-only)", () => {
     expect(short.autoApplyEligible).toBe(false); // rounds < 3
   });
 
+  it("rubber-stamp guard: a hub-only round does NOT count toward the cold gate", () => {
+    const vault = freshVault();
+    writeEvents(vault, [
+      { kind: "consolidate", proposal_id: "P-cold" },
+      { kind: "consolidate-apply", proposal_id: "P-cold", accepted: ["cold:a"], rejected: [], skipped: [] },
+      // Two hub-only rounds: decided no cold items.
+      { kind: "consolidate", proposal_id: "P-hub1" },
+      { kind: "consolidate-apply", proposal_id: "P-hub1", accepted: ["hub:x"], rejected: [], skipped: [] },
+      { kind: "consolidate", proposal_id: "P-hub2" },
+      { kind: "consolidate-apply", proposal_id: "P-hub2", accepted: ["hub:y"], rejected: [], skipped: [] },
+    ]);
+    const ledger = computeConsolidationLedger(vault);
+    expect(ledger.applyRounds).toBe(3);
+    expect(ledger.coldRounds).toBe(1);
+    expect(ledger.coldRate).toBe(1);
+    // 3 total rounds, but only 1 cold-bearing round → cold autonomy stays locked.
+    expect(ledger.autoApplyEligible).toBe(false);
+    expect(ledgerLine(ledger)).toContain("not eligible");
+  });
+
   it("fresh vault (no events file) → zero ledger, harmless line", () => {
     const vault = freshVault();
     const ledger = computeConsolidationLedger(vault);

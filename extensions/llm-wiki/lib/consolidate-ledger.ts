@@ -25,7 +25,15 @@ export interface ConsolidationLedger {
   coldRejects: number;
   /** accept / (accept + reject) over cold items; null when nothing decided. */
   coldRate: number | null;
-  /** The M3 gate: rounds ≥ 3 && coldRate ≥ 0.9. */
+  /**
+   * Apply rounds in which at least one COLD item decision occurred — only
+   * these count toward the cold-autonomy gate. Rounds that decided no cold
+   * items (e.g. hub-only rounds) neither raise nor lower the cold rate:
+   * "reviewed, but nothing cold to judge" must not unlock cold autonomy.
+   * (Rubber-stamp guard, per the v3 plan's own warning.)
+   */
+  coldRounds: number;
+  /** The M3 gate: coldRounds ≥ 3 && coldRate ≥ 0.9. */
   autoApplyEligible: boolean;
 }
 
@@ -43,6 +51,7 @@ export function computeConsolidationLedger(paths: VaultPaths): ConsolidationLedg
   let rejects = 0;
   let coldAccepts = 0;
   let coldRejects = 0;
+  let coldRounds = 0;
   try {
     const lines = readFileSync(eventsPath, "utf8").split("\n").filter(Boolean);
     for (const line of lines) {
@@ -65,6 +74,12 @@ export function computeConsolidationLedger(paths: VaultPaths): ConsolidationLedg
           rejects++;
           if (actionOf(id) === "cold") coldRejects++;
         }
+        // A round counts toward the cold gate only if it actually decided
+        // cold items (accepts or rejects).
+        const roundColdDecisions =
+          accepted.filter((id) => actionOf(id) === "cold").length +
+          rejected.filter((id) => actionOf(id) === "cold").length;
+        if (roundColdDecisions > 0) coldRounds++;
       }
     }
   } catch {
@@ -72,7 +87,7 @@ export function computeConsolidationLedger(paths: VaultPaths): ConsolidationLedg
   }
   const decided = coldAccepts + coldRejects;
   const coldRate = decided > 0 ? coldAccepts / decided : null;
-  const autoApplyEligible = applyRounds >= 3 && coldRate !== null && coldRate >= 0.9;
+  const autoApplyEligible = coldRounds >= 3 && coldRate !== null && coldRate >= 0.9;
   return {
     proposals,
     applyRounds,
@@ -80,6 +95,7 @@ export function computeConsolidationLedger(paths: VaultPaths): ConsolidationLedg
     rejects,
     coldAccepts,
     coldRejects,
+    coldRounds,
     coldRate,
     autoApplyEligible,
   };

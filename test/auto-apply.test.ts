@@ -83,7 +83,7 @@ describe("deriveAutoApplyAccept (pure gate, fork M3)", () => {
     ];
     const eligible = {
       proposals: 5, applyRounds: 5, accepts: 9, rejects: 1,
-      coldAccepts: 4, coldRejects: 0, coldRate: 1, autoApplyEligible: true,
+      coldAccepts: 4, coldRejects: 0, coldRounds: 4, coldRate: 1, autoApplyEligible: true,
     };
     const refused = deriveAutoApplyAccept(items, false, eligible);
     expect(refused.allowed).toBe(false);
@@ -94,12 +94,12 @@ describe("deriveAutoApplyAccept (pure gate, fork M3)", () => {
     const items = [{ id: "cold:a", action: "cold" as const }];
     const notEnoughRounds = {
       proposals: 3, applyRounds: 2, accepts: 2, rejects: 0,
-      coldAccepts: 2, coldRejects: 0, coldRate: 1, autoApplyEligible: false,
+      coldAccepts: 2, coldRejects: 0, coldRounds: 2, coldRate: 1, autoApplyEligible: false,
     };
     expect(deriveAutoApplyAccept(items, true, notEnoughRounds).allowed).toBe(false);
     const lowRate = {
       proposals: 4, applyRounds: 4, accepts: 8, rejects: 2,
-      coldAccepts: 4, coldRejects: 1, coldRate: 0.8, autoApplyEligible: false,
+      coldAccepts: 4, coldRejects: 1, coldRounds: 4, coldRate: 0.8, autoApplyEligible: false,
     };
     const refused = deriveAutoApplyAccept(items, true, lowRate);
     expect(refused.allowed).toBe(false);
@@ -109,7 +109,7 @@ describe("deriveAutoApplyAccept (pure gate, fork M3)", () => {
   it("eligible: returns COLD ids only, capped at 25", () => {
     const eligible = {
       proposals: 4, applyRounds: 4, accepts: 30, rejects: 0,
-      coldAccepts: 30, coldRejects: 0, coldRate: 1, autoApplyEligible: true,
+      coldAccepts: 30, coldRejects: 0, coldRounds: 4, coldRate: 1, autoApplyEligible: true,
     };
     const many: Array<{ id: string; action: "cold" | "supersede" | "hub" }> = Array.from(
       { length: 30 },
