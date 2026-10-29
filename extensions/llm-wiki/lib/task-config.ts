@@ -113,6 +113,14 @@ export interface TaskConfig {
   projectId?: string;
 
   /**
+   * pi-mem-wiki fork (M3): consolidation autonomy switch. Defaults to false.
+   * Even when true, auto-apply only fires if the ledger shows ≥3 review rounds
+   * AND a cold accept-rate ≥ 0.9, applies COLD items only, capped at 25/run.
+   * See lib/consolidate-ledger.ts (measure-only by design).
+   */
+  autoApplyCold?: boolean;
+
+  /**
    * Surface wiki activity in the UI (issue #77). When enabled (the default),
    * the status line reflects recall hits and the periodic observe/retro
    * reminder is shown to the user (`display: true`) instead of being injected
@@ -312,6 +320,11 @@ function readNamespacedConfig(path: string): Partial<TaskConfig> {
     // basename (review medium-4's better fix).
     if (typeof section.projectId === "string" && section.projectId.trim()) {
       out.projectId = section.projectId.trim();
+    }
+
+    // pi-mem-wiki fork (M3): autonomy switch (default false — measured gate).
+    if (typeof section.autoApplyCold === "boolean") {
+      out.autoApplyCold = section.autoApplyCold;
     }
 
     const threshold = section.recallLinksThreshold;
@@ -554,6 +567,7 @@ const KNOWN_KEYS = [
   "recallLinksThreshold",
   "recallSkillInlineMax",
   "projectId", // pi-mem-wiki fork (v2 follow-up): explicit project scope id
+  "autoApplyCold", // pi-mem-wiki fork (M3): autonomy switch (defaults OFF, ledger-gated)
   "notices",
   "autoRecall",
   "ambientPersonalVault",

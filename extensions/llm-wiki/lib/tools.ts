@@ -993,6 +993,12 @@ export function registerWikiApplyConsolidate(pi: ExtensionAPI): void {
           description: "For supersede items: pageId → target page id (required, never guessed)",
         }),
       ),
+      auto: Type.Optional(
+        Type.Boolean({
+          description:
+            "M3 autonomy path: derive the accept list from all cold items (cap 25). Requires llm-wiki.autoApplyCold=true AND the ledger gate (rounds≥3, cold rate≥0.9). Refused otherwise; accept must be empty when set.",
+        }),
+      ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = getPaths(ctx.cwd);
@@ -1011,10 +1017,11 @@ export function registerWikiApplyConsolidate(pi: ExtensionAPI): void {
       }
       const result = applyConsolidate(paths, {
         proposalId: params.proposal_id,
-        accept: params.accept,
+        accept: params.auto ? [] : params.accept,
         ...(params.reject ? { reject: params.reject } : {}),
         ...(params.confirm ? { confirm: params.confirm } : {}),
         ...(params.supersede_targets ? { supersedeTargets: params.supersede_targets } : {}),
+        ...(params.auto ? { auto: true } : {}),
       });
       if (!result.ok) {
         return {
@@ -1098,6 +1105,7 @@ export function registerWikiStatus(pi: ExtensionAPI): void {
         status.embeddings.embedded > 0
           ? `Semantic embeddings: ${status.embeddings.embedded}/${status.totalPages} pages${status.embeddings.model ? `, model ${status.embeddings.model}` : ""}`
           : "Semantic embeddings: none configured (lexical recall only)",
+        `Consolidation ledger: ${status.consolidationLedger.applyRounds} round(s) over ${status.consolidationLedger.proposals} proposal(s), auto-apply ${status.consolidationLedger.autoApplyEligible ? "ELIGIBLE" : "not eligible"}`,
         `QMD package: ${status.qmd.qmdVersion}`,
         ...diagLines,
       ];

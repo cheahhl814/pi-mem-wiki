@@ -591,9 +591,15 @@ server.registerTool(
         .optional()
         .describe("'<proposalId>:<acceptedCount>' to actually write; without it = dry run"),
       supersede_targets: z.record(z.string(), z.string()).optional().describe("supersede: pageId → target id (required per item)"),
+      auto: z
+        .boolean()
+        .optional()
+        .describe(
+          "M3 autonomy path: derive accept from all cold items (cap 25). Requires llm-wiki.autoApplyCold=true + ledger gate (rounds≥3, cold rate≥0.9); accept must be empty when set.",
+        ),
     }),
   },
-  async ({ proposal_id, accept, reject, confirm, supersede_targets }) => {
+  async ({ proposal_id, accept, reject, confirm, supersede_targets, auto }) => {
     if (!hasVault()) {
       return {
         content: [
@@ -605,10 +611,11 @@ server.registerTool(
     const paths = getPaths();
     const result = await applyConsolidateOperation(paths, {
       proposalId: proposal_id,
-      accept,
+      accept: auto ? [] : accept,
       ...(reject ? { reject } : {}),
       ...(confirm ? { confirm } : {}),
       ...(supersede_targets ? { supersedeTargets: supersede_targets } : {}),
+      ...(auto ? { auto: true } : {}),
     });
     if (!result.ok) {
       return {

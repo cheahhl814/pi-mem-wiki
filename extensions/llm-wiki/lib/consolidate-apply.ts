@@ -10,7 +10,9 @@ import {
   writeKnowledgeDocumentFile,
 } from "./knowledge-document.js";
 import { fmtDate, slugify, type VaultPaths } from "./utils.js";
+import { loadTaskConfig } from "./task-config.js";
 import { assertWritableVault } from "./vault-format.js";
+import { computeConsolidationLedger, type ConsolidationLedger } from "./consolidate-ledger.js";
 
 /**
  * pi-mem-wiki fork (M2): apply a consolidation proposal — DRY-RUN by default,
@@ -42,6 +44,10 @@ export interface ConsolidateApplyInput {
   confirm?: string;
   /** For supersede items: first page id → named target id (required per item). */
   supersedeTargets?: Record<string, string>;
+  /** pi-mem-wiki fork (M3): TRUE = derive accept from all cold items (cap 25),
+   * gated on llm-wiki.autoApplyCold AND the ledger. Input.accept is REQUIRED
+   * to be empty when auto is set. Non-cold items are ineligible by design. */
+  auto?: boolean;
 }
 
 export interface ConsolidateApplyDiff {
@@ -64,7 +70,12 @@ export type ConsolidateApplyResult =
     }
   | {
       ok: false;
-      code: "no_proposal" | "proposal_stale" | "confirm_mismatch" | "unknown_item";
+      code:
+        | "no_proposal"
+        | "proposal_stale"
+        | "confirm_mismatch"
+        | "unknown_item"
+        | "auto_apply_refused";
       message: string;
     };
 
@@ -94,6 +105,46 @@ function hubPageName(tag: string): string {
   return `${slugify(tag)}-hub`;
 }
 
+// ── M3: autoApplyCold — measured autonomy, cold-only, capped ──
+
+export const AUTO_APPLY_COLD_CAP = 25;
+
+/**
+ * pi-mem-wiki fork (M3): derive the auto-apply accept list from a stored
+ * proposal. Refuses unless (a) llm-wiki.autoApplyCold is explicitly true AND
+ * (b) the ledger shows ≥3 apply rounds AND ≥0.9 cold accept-rate. Only ever
+ * returns COLD item ids, capped at 25 per run. Pure function over (items,
+ * config, ledger) so tests need no vault.
+ */
+export function deriveAutoApplyAccept(
+  items: Array<{ id: string; action: "cold" | "supersede" | "hub" }>,
+  autoApplyCold: boolean,
+  ledger: ConsolidationLedger,
+  cap = AUTO_APPLY_COLD_CAP,
+): { allowed: true; accept: string[]; capped: boolean } | { allowed: false; reason: string } {
+  if (autoApplyCold !== true) {
+    return {
+      allowed: false,
+      reason:
+        'llm-wiki.autoApplyCold is false (the default). Set it to true explicitly, then round(s) ≥ 3 and cold accept-rate ≥ 90% are still required.',
+    };
+  }
+  if (ledger.applyRounds < 3) {
+    return {
+      allowed: false,
+      reason: `Autonomy gate not met: ${ledger.applyRounds}/3 review rounds completed (ledger rounds ≥ 3 required).`,
+    };
+  }
+  if (ledger.coldRate === null || ledger.coldRate < 0.9) {
+    return {
+      allowed: false,
+      reason: `Autonomy gate not met: cold accept-rate ${ledger.coldRate === null ? "n/a" : Math.round(ledger.coldRate * 100) + "%"} < 90%.`,
+    };
+  }
+  const cold = items.filter((i) => i.action === "cold").map((i) => i.id);
+  return { allowed: true, accept: cold.slice(0, cap), capped: cold.length > cap };
+}
+
 export function applyConsolidate(
   paths: VaultPaths,
   input: ConsolidateApplyInput,
@@ -118,6 +169,25 @@ export function applyConsolidate(
       message: `Stored proposal is ${stored.proposal_id}, not ${input.proposalId} — re-run wiki_consolidate.`,
     };
   }
+
+  // ── M3 auto path: derive cold-only accept from the ledger-gated switch ──
+  if (input.auto === true) {
+    if (input.accept.length > 0) {
+      return {
+        ok: false,
+        code: "auto_apply_refused",
+        message: "auto: true derives its own cold-only accept list — pass accept: [] with auto, not a manual list.",
+      };
+    }
+    const config = loadTaskConfig(paths.root) ?? ({} as { autoApplyCold?: boolean });
+    const ledger = computeConsolidationLedger(paths);
+    const derived = deriveAutoApplyAccept(stored.items, config.autoApplyCold === true, ledger);
+    if (!derived.allowed) {
+      return { ok: false, code: "auto_apply_refused", message: derived.reason };
+    }
+    input.accept = derived.accept;
+  }
+
   const byId = new Map(stored.items.map((i) => [i.id, i] as const));
   const unknown = input.accept.filter((id) => !byId.has(id));
   if (unknown.length > 0) {

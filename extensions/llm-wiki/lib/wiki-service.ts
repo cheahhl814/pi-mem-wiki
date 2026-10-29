@@ -4,6 +4,8 @@ import {
   embeddingStorePath,
   readEmbeddingStore,
 } from "./embeddings.js";
+import { computeConsolidationLedger } from "./consolidate-ledger.js";
+import { type ConsolidationLedger } from "./consolidate-ledger.js";
 import type { KnowledgeDiagnostic } from "./knowledge-document.js";
 import type { Registry } from "./metadata.js";
 import {
@@ -51,6 +53,8 @@ export interface WikiStatusSnapshot {
     embedded: number;
     model?: string;
   };
+  /** pi-mem-wiki fork (M3): consolidation accept-rate ledger (measure-only). */
+  consolidationLedger: ConsolidationLedger;
 }
 
 /**
@@ -239,6 +243,7 @@ export async function getWikiStatus(paths: VaultPaths): Promise<WikiStatusSnapsh
         return { hasStore: false, embedded: 0 };
       }
     })(),
+    consolidationLedger: computeConsolidationLedger(paths),
   };
 }
 
