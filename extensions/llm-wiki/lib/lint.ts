@@ -88,9 +88,11 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
     const resolved = buildResolvedBacklinks(page.id, page.body, wikilinkIndex);
     for (const target of resolved.targets) inbound[target]++;
     for (const unresolved of resolved.unresolved) {
-      if (classifyUnresolvedTarget(unresolved.target) === "tag") {
+      // pi-mem-wiki fork: classify ONCE per target (review low-13).
+      const targetClass = classifyUnresolvedTarget(unresolved.target);
+      if (targetClass === "tag") {
         tagLikeLinks++;
-      } else if (classifyUnresolvedTarget(unresolved.target) === "source-ref") {
+      } else if (targetClass === "source-ref") {
         sourcePacketLinks++;
       } else {
         const sources = gapSources.get(unresolved.target) ?? new Set<string>();

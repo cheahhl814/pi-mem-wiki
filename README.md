@@ -11,6 +11,16 @@
 > `stale_after`; page-level `valid_from`/`valid_until`/`superseded_by`;
 > age-stamped recall). Designed via a 3-seat multi-agent brainstorm
 > (Borda-voted, 2026-10-29) — see `docs/superpowers/roadmaps/fork-v1.md`.
+>
+> **Fork differences from upstream** (behavioral, for upstream users landing
+> here): lint auto-fix NEVER creates pages from bare-token links (`[[foo]]`
+> ×2 previously stubbed `concepts/foo.md` upstream — the fork classifies bare
+> tokens as tags instead); bare tokens and `raw/**` targets are reported as
+> informational counts, not missing pages; ambient recall is project-scoped
+> and applies time/lifecycle decay — decay is ranking-only, but with the
+> ambient minScore gate decayed pages effectively drop out of ambient
+> injection while staying fully recallable via explicit `wiki_recall`
+> (including `include_cold: true`).
 
 
 **English** | <a href="./README.zh.md">中文</a> | <a href="./README.es.md">Español</a> | <a href="./README.ja.md">日本語</a> | <a href="./README.de.md">Deutsch</a> | <a href="./README.fr.md">Français</a> | <a href="./README.pt.md">Português</a> | <a href="./README.ru.md">Русский</a> | <a href="./README.ko.md">한국어</a> | <a href="./README.hi.md">हिंदी</a>

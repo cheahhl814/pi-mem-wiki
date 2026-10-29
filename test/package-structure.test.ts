@@ -353,6 +353,11 @@ describe("package structure", () => {
     expect(readme).toContain("@cheahhl814/pi-mem-wiki");
     expect(readme).toContain("pi install npm:@cheahhl814/pi-mem-wiki");
     expect(readme).toContain("@zosmaai/pi-llm-wiki"); // fork attribution must stay
+    // pi-mem-wiki fork (review low-16): MIT requires preserving the upstream
+    // copyright notice, and the attribution pin must be a real link, not any
+    // incidental mention.
+    expect(readFile(join(rootDir, "LICENSE"))).toMatch(/Copyright \(c\) \d{4} zosmaai/);
+    expect(readme).toContain("https://github.com/zosmaai/pi-llm-wiki");
     expect(readme).toContain("Karpathy");
     expect(readme).toContain("Obsidian");
   });

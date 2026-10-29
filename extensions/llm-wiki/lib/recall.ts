@@ -19,6 +19,7 @@ import {
   isPersonalVault,
   readJson,
   resolveVaultPaths,
+  slugify,
   type VaultPaths,
 } from "./utils.js";
 import { inspectVaultFormat } from "./vault-format.js";
@@ -488,12 +489,41 @@ export const TIME_PENALTY: Record<PageTimeState, number> = {
 
 const DAY_MS = 86_400_000;
 
+function isDateOnly(value: unknown): boolean {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
+}
+
+function utcDateStr(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
 function parseIsoDate(value: unknown): Date | null {
   if (typeof value !== "string") return null;
   const v = value.trim();
-  if (!/^\d{4}-\d{2}-\d{2}(T.*)?$/.test(v)) return null;
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? null : d;
+  // Date-only: parse at UTC midnight and REJECT calendar-roll over (2024-02-30
+  // must not silently become 2024-03-01).
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+    const d = new Date(`${v}T00:00:00Z`);
+    return Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== v ? null : d;
+  }
+  // Datetime WITH explicit offset/Z: parsed as-is.
+  if (/^\d{4}-\d{2}-\d{2}T/.test(v) && /[Zz]|[+-]\d{2}:?\d{2}$/.test(v)) {
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  // Datetime WITHOUT an offset: treat as UTC (deliberate — a naive-local
+  // interpretation would shift meaning with the host timezone).
+  if (/^\d{4}-\d{2}-\d{2}T/.test(v)) {
+    const d = new Date(`${v}Z`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+/** Flatten + cap a frontmatter-derived note before it enters model context. */
+function sanitizeNote(value: string): string {
+  const flat = value.replace(/\s+/g, " ").trim();
+  return flat.length > 80 ? `${flat.slice(0, 77)}…` : flat;
 }
 
 /** "90d" | "12w" | "6m" | "1y" | plain number-of-days → days; null when not a duration. */
@@ -528,26 +558,50 @@ export function evaluatePageTime(
 ): PageTimeInfo {
   const supersededBy = frontmatter.superseded_by;
   if (typeof supersededBy === "string" && supersededBy.trim()) {
-    return { state: "superseded", note: `superseded by ${supersededBy.trim()}` };
+    return { state: "superseded", note: `superseded by ${sanitizeNote(supersededBy.trim())}` };
   }
-  const validUntil = parseIsoDate(frontmatter.valid_until);
-  if (validUntil && now.getTime() > validUntil.getTime()) {
-    return { state: "expired", note: `valid until ${String(frontmatter.valid_until)}` };
+  const validUntilRaw = frontmatter.valid_until;
+  const validUntil = parseIsoDate(validUntilRaw);
+  if (validUntil) {
+    // Date-only valid_until covers its WHOLE final day (expired only when the
+    // current UTC date is strictly later); full datetimes expire at the instant.
+    const expired = isDateOnly(validUntilRaw)
+      ? utcDateStr(now) > utcDateStr(validUntil)
+      : now.getTime() > validUntil.getTime();
+    if (expired) {
+      return { state: "expired", note: `valid until ${sanitizeNote(String(validUntilRaw))}` };
+    }
   }
-  const validFrom = parseIsoDate(frontmatter.valid_from);
-  if (validFrom && now.getTime() < validFrom.getTime()) {
-    return { state: "not-yet-valid", note: `valid from ${String(frontmatter.valid_from)}` };
+  const validFromRaw = frontmatter.valid_from;
+  const validFrom = parseIsoDate(validFromRaw);
+  if (validFrom) {
+    const notYet = isDateOnly(validFromRaw)
+      ? utcDateStr(now) < utcDateStr(validFrom)
+      : now.getTime() < validFrom.getTime();
+    if (notYet) {
+      return { state: "not-yet-valid", note: `valid from ${sanitizeNote(String(validFromRaw))}` };
+    }
   }
-  const staleDays = parseDurationDays(frontmatter.stale_after);
-  if (staleDays !== null) {
-    const updated = parseIsoDate(frontmatter.updated);
-    if (updated) {
-      const ageDays = (now.getTime() - updated.getTime()) / DAY_MS;
-      if (ageDays > staleDays) {
-        return {
-          state: "stale",
-          note: `stale after ${staleDays}d (updated ${Math.floor(ageDays)}d ago)`,
-        };
+  const staleRaw = frontmatter.stale_after;
+  // OKF v0.2 spec form FIRST: absolute date — stale when today >= stale_after.
+  const staleDate = parseIsoDate(staleRaw);
+  if (staleDate) {
+    if (now.getTime() >= staleDate.getTime()) {
+      return { state: "stale", note: `stale since ${sanitizeNote(String(staleRaw))}` };
+    }
+  } else {
+    // Fork extension form: duration relative to `updated` ("90d", "12w", …).
+    const staleDays = parseDurationDays(staleRaw);
+    if (staleDays !== null) {
+      const updated = parseIsoDate(frontmatter.updated);
+      if (updated) {
+        const ageDays = (now.getTime() - updated.getTime()) / DAY_MS;
+        if (ageDays > staleDays) {
+          return {
+            state: "stale",
+            note: `stale after ${staleDays}d (updated ${Math.max(0, Math.floor(ageDays))}d ago)`,
+          };
+        }
       }
     }
   }
@@ -595,16 +649,29 @@ export function searchWiki(
     const frontmatter = parsed?.frontmatter ?? {};
     const body = parsed?.body ?? "";
 
-    // pi-mem-wiki fork (fix 2): project-scoped pages recall only when the
-    // query's project matches. Unscoped and `global` pages are unrestricted.
-    // scope is a non-standard frontmatter field, so it reaches us via the
-    // registry entry (buildRegistry copies doc.extensions into entries).
+    // pi-mem-wiki fork (fix 2, review-hardened): project-scoped pages recall
+    // only when a scope element matches the query's project — slugified on
+    // BOTH sides so `project:My Proj` matches projectId `my-proj` — or the
+    // page declares `global`. Unscoped pages are unrestricted; array scopes
+    // match if ANY element is global or a matching project. Non-string,
+    // non-empty scope shapes are treated as scoped-but-unmatched (fail
+    // closed) rather than leaked as unscoped.
     if (scopeFilter?.projectId) {
-      const rawScope = frontmatter.scope ?? (entry as Record<string, unknown>).scope;
-      const pageScope = typeof rawScope === "string" ? rawScope.trim() : "";
-      if (pageScope.startsWith("project:")) {
-        const pageProject = pageScope.slice("project:".length).trim();
-        if (pageProject && pageProject !== scopeFilter.projectId) continue;
+      const rawScope: unknown =
+        frontmatter.scope ?? (entry as Record<string, unknown>).scope;
+      const scopeList: unknown[] = Array.isArray(rawScope) ? rawScope : [rawScope];
+      const scopes = scopeList
+        .filter((s): s is string => typeof s === "string")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (scopes.length > 0) {
+        const isGlobal = scopes.includes("global");
+        const projectHit = scopes.some(
+          (s) =>
+            s.startsWith("project:") &&
+            slugify(s.slice("project:".length)) === scopeFilter.projectId,
+        );
+        if (!isGlobal && !projectHit) continue;
       }
     }
 
@@ -673,14 +740,17 @@ export function searchWiki(
     }
     const semEligible = semCos >= SEMANTIC_MIN_COSINE;
 
-    // pi-mem-wiki fork (fix 4): evaluate time validity once per candidate.
-    // Time fields may be non-standard frontmatter (superseded_by, valid_from,
-    // valid_until); they now parse as standard fields on the fork, with the
-    // registry entry kept as fallback for vaults built before this change.
+    // pi-mem-wiki fork (fix 4, review-integrated): evaluate time validity once
+    // per candidate. Frontmatter WINS (fresh page file); the registry entry
+    // only fills gaps — a stale registry projection must not override a
+    // hand-edited page. "updated" is included so registry-only fallback
+    // entries still evaluate.
     const timeFields: Record<string, unknown> = { ...frontmatter };
-    for (const key of ["superseded_by", "valid_from", "valid_until", "stale_after"] as const) {
-      const fromEntry = (entry as Record<string, unknown>)[key];
-      if (fromEntry !== undefined) timeFields[key] = fromEntry;
+    for (const key of ["superseded_by", "valid_from", "valid_until", "stale_after", "updated"] as const) {
+      if (timeFields[key] === undefined) {
+        const fromEntry = (entry as Record<string, unknown>)[key];
+        if (fromEntry !== undefined) timeFields[key] = fromEntry;
+      }
     }
     const timeInfo = evaluatePageTime(timeFields);
     // pi-mem-wiki fork (v2-a): lifecycle cold pool — archived/cold pages decay
@@ -831,13 +901,24 @@ export function searchWikiLayered(
   if (isPersonalVault(primaryPaths)) return primaryResults;
 
   // Search personal vault as secondary layer (only when explicitly requested).
-  // pi-mem-wiki fork (fix 2): the scope filter never applies to the personal
-  // vault — its pages follow the caller's own vault, not this one's project.
+  // pi-mem-wiki fork (fix 2, review-integrated): the personal vault is
+  // cross-project BY DESIGN — project scoping never applies to it; only the
+  // cold-pool escape hatch (includeCold) is honored there.
   let personalResults: RecallResult[] = [];
   if (includePersonal) {
     const personalPaths = getPersonalWikiPaths();
     if (existsSync(join(personalPaths.dotWiki, "config.json"))) {
-      personalResults = searchWiki(personalPaths, query, maxResults, minScore, semantic, scopeFilter);
+      const personalFilter = scopeFilter
+        ? { includeCold: scopeFilter.includeCold }
+        : undefined;
+      personalResults = searchWiki(
+        personalPaths,
+        query,
+        maxResults,
+        minScore,
+        semantic,
+        personalFilter,
+      );
     }
   }
 
@@ -902,6 +983,21 @@ function storeHasEntries(paths: VaultPaths): boolean {
 export function cjkQueryDegrades(paths: VaultPaths, query: string): boolean {
   if (!CJK_RE.test(query)) return false;
   return !storeHasEntries(paths);
+}
+
+/**
+ * pi-mem-wiki fork (fix 3, review-integrated): the ambient-hook decision for the
+ * CJK degradation notice — pure, testable, never called on a non-empty result
+ * set (the original in-hook placement was unreachable dead code).
+ */
+export function cjkAmbientNotice(
+  paths: VaultPaths,
+  prompt: string,
+  results: RecallResult[],
+): string | null {
+  if (results.length !== 0) return null;
+  if (!cjkQueryDegrades(paths, prompt)) return null;
+  return "\u{1F9E0} CJK query matched nothing — semantic index unconfigured, so cross-script recall is degraded. Configure an embedder and run wiki_reindex_embeddings.";
 }
 
 /**

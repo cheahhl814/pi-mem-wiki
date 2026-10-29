@@ -14,6 +14,7 @@ import {
 } from "./lib/observation.js";
 import { recoverQmdIndex } from "./lib/qmd-indexing.js";
 import {
+  cjkAmbientNotice,
   cjkQueryDegrades,
   formatRecallContext,
   registerWikiRecall,
@@ -325,13 +326,14 @@ Then call wiki_bootstrap with the inferred topic and mode to finalize the setup.
       // query embedding); degrades to pure lexical otherwise. minScore=5 still
       // gates noise — a semantic-only match must be strongly relevant to pass.
       runtime.ensureConfig(process.cwd());
-      // pi-mem-wiki fork (fix 2): scope ambient recall to this project — pages
-      // frontmatter-scoped `project:<other-project>` are filtered out; unscoped
-      // and `global` pages always match. Project id = slugified cwd basename
-      // (the same convention the vault's own project dir uses).
+      // pi-mem-wiki fork (fix 2, review-integrated): scope ambient recall to
+      // this project — pages frontmatter-scoped `project:<other-project>` are
+      // filtered out; unscoped and `global` pages always match. Project id =
+      // slugified VAULT ROOT basename (review: cwd basename breaks when pi
+      // starts from a subdirectory like myproj/src → "src").
       const results = await searchWikiHybrid(paths, prompt, 3, 5, false, {
         config: runtime.config,
-        scopeFilter: { projectId: slugify(basename(process.cwd())) },
+        scopeFilter: { projectId: slugify(basename(paths.root)) },
       });
       if (results.length > 0) {
         // Two-stage gate (issue #68): above the vault-size threshold, inject
@@ -343,21 +345,6 @@ Then call wiki_bootstrap with the inferred topic and mode to finalize the setup.
           linksOnly,
           skillInlineMax: runtime.config?.recallSkillInlineMax,
         });
-        // pi-mem-wiki fork (fix 3): loud degradation notice. A CJK query that
-        // returns zero hits on a vault with no semantic index is a known,
-        // by-construction lexical gap (cross-script matching needs vectors);
-        // surface it instead of a silent empty recall.
-        if (
-          results.length === 0 &&
-          cjkQueryDegrades(paths, prompt) &&
-          ctx?.hasUI &&
-          noticesEnabled(runtime.config)
-        ) {
-          ctx.ui.setStatus(
-            "llm-wiki",
-            "\u{1F9E0} CJK query matched nothing — semantic index unconfigured, so cross-script recall is degraded. Configure an embedder and run wiki_reindex_embeddings.",
-          );
-        }
         if (recallContext) {
           dynamicContext += `\n\n${recallContext}`;
         }
@@ -370,6 +357,16 @@ Then call wiki_bootstrap with the inferred topic and mode to finalize the setup.
             "llm-wiki",
             `\u{1F9E0} LLM Wiki — recalled ${n} page${n === 1 ? "" : "s"} for this task`,
           );
+        }
+      } else {
+        // pi-mem-wiki fork (fix 3, review-integrated): loud degradation notice
+        // on the ZERO-results path — the original placement inside the
+        // non-empty branch was unreachable (the review caught it). A CJK query
+        // returning zero hits on a vault with no semantic index is a known,
+        // by-construction lexical gap (cross-script matching needs vectors).
+        const cjkNotice = cjkAmbientNotice(paths, prompt, results);
+        if (cjkNotice && ctx?.hasUI && noticesEnabled(runtime.config)) {
+          ctx.ui.setStatus("llm-wiki", cjkNotice);
         }
       }
     }
