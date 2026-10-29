@@ -93,6 +93,7 @@ it("starts the published MCP command, exposes all 15 tools, and invokes operatio
     });
     const tools = (listed.result as { tools: Array<{ name: string }> }).tools;
     expect(tools.map((tool) => tool.name).sort()).toEqual([
+      "wiki_apply_consolidate", // pi-mem-wiki fork M2
       "wiki_bootstrap",
       "wiki_capture_source",
       "wiki_consolidate", // pi-mem-wiki fork v2-b

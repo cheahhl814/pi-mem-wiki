@@ -34,6 +34,7 @@ import {
   trajectoriesEnabled,
 } from "./lib/task-config.js";
 import {
+  registerWikiApplyConsolidate,
   registerWikiBootstrap,
   registerWikiCaptureSource,
   registerWikiConsolidate,
@@ -111,6 +112,7 @@ export default function (pi: ExtensionAPI) {
   registerWikiIngest(pi, runtime);
   registerWikiEnsurePage(pi, runtime);
   registerWikiSearch(pi);
+  registerWikiApplyConsolidate(pi);
   registerWikiConsolidate(pi, runtime);
   registerWikiLint(pi, runtime);
   registerWikiStatus(pi);

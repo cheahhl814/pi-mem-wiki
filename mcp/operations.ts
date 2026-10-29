@@ -31,6 +31,7 @@ import {
 } from "../extensions/llm-wiki/lib/knowledge-links.js";
 import { runWikiLint } from "../extensions/llm-wiki/lib/lint.js";
 import { runConsolidate } from "../extensions/llm-wiki/lib/consolidate.js";
+import { applyConsolidate } from "../extensions/llm-wiki/lib/consolidate-apply.js";
 import {
   appendEvent,
   type ProjectionResult,
@@ -458,6 +459,41 @@ export async function consolidateOperation(
   }
   const result = runConsolidate(paths, { maxClusters });
   return { ok: true, report: result.report, proposalPath: result.proposalPath };
+}
+
+/**
+ * pi-mem-wiki fork (M2): shared proposal-apply operation — dry-run by default,
+ * confirm-gated, frontmatter-only writes, hash-drift abort. Mirrors the Pi tool.
+ */
+export async function applyConsolidateOperation(
+  paths: VaultPaths,
+  input: Parameters<typeof applyConsolidate>[1],
+): Promise<
+  | { ok: true; report: string; dryRun: boolean; details: Record<string, unknown> }
+  | { ok: false; code: string; message: string }
+> {
+  const vaultCheck = inspectWritableVault(paths);
+  if (!vaultCheck.ok) {
+    return {
+      ok: false,
+      code: vaultCheck.diagnostics[0].code,
+      message: vaultCheck.diagnostics[0].message,
+    };
+  }
+  const result = applyConsolidate(paths, input);
+  if (!result.ok) {
+    return { ok: false, code: result.code, message: result.message };
+  }
+  return {
+    ok: true,
+    report: result.report,
+    dryRun: result.dryRun,
+    details: {
+      accepted: result.accepted,
+      rejected: result.rejected,
+      skipped: result.skipped,
+    },
+  };
 }
 
 /**

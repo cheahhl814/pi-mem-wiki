@@ -15,6 +15,7 @@ import {
 import { applyWikilinkGate, buildWikilinkIndex } from "./knowledge-links.js";
 import { runWikiLint } from "./lint.js";
 import { runConsolidate } from "./consolidate.js";
+import { applyConsolidate, type ConsolidateApplyInput } from "./consolidate-apply.js";
 import { appendEvent, type Registry, rebuildMetadata, rebuildMetadataLight } from "./metadata.js";
 import { reindexQmdVault } from "./qmd-indexing.js";
 import type { Runtime } from "./runtime.js";
@@ -951,6 +952,86 @@ export function registerWikiConsolidate(pi: ExtensionAPI, runtime?: Runtime): vo
           return `\u{1F9E9} **Consolidation proposal written** (proposal-only — nothing applied)\n\n- Pages scanned: ${result.counts.pages}\n- Un-promoted packets: ${result.counts.unPromoted}\n- Stale pages: ${result.counts.stale}\n- Cold-pool candidates: ${result.counts.coldPoolCandidates}\n- Tag clusters (≥3 packets): ${result.counts.clusters}\n\n📄 Proposal: \`${result.proposalPath}\``;
         },
       });
+    },
+  });
+}
+
+// ─── 6c. wiki_apply_consolidate (fork M2) ─────
+
+export function registerWikiApplyConsolidate(pi: ExtensionAPI): void {
+  pi.registerTool({
+    name: "wiki_apply_consolidate",
+    label: "Wiki Apply Consolidate",
+    description:
+      "Apply a consolidation proposal produced by wiki_consolidate. DRY RUN by default " +
+      "(no confirm). Confirm format: '<proposalId>:<acceptedCount>'. cold = frontmatter " +
+      "lifecycle only (move-never-delete); supersede requires a named target per item; " +
+      "hub creates the page only when explicitly accepted. Aborts if any page drifted " +
+      "since proposal generation. NEVER merges or rewrites page bodies.",
+    promptSnippet: "Apply (or dry-run) a consolidation proposal",
+    promptGuidelines: [
+      "ALWAYS dry-run first, read the report, then apply with confirm '<proposalId>:<n>'.",
+      "For supersede items you MUST name targets via supersede_targets — never guess.",
+      "Keep the first real round small (the plan's cap: ≤25 cold items).",
+    ],
+    parameters: Type.Object({
+      proposal_id: Type.String({ description: "Proposal id from wiki_consolidate (P-YYYY-MM-DD-HHMM)" }),
+      accept: Type.Array(Type.String(), {
+        description: 'Item ids to apply: "cold:<pageId>" | "supersede:<pageId>" | "hub:<tag>"',
+      }),
+      reject: Type.Optional(
+        Type.Array(Type.String(), { description: "Item ids explicitly rejected (ledger record)" }),
+      ),
+      confirm: Type.Optional(
+        Type.String({
+          description:
+            "'<proposalId>:<acceptedCount>' to actually write. Without it the tool is a dry run.",
+        }),
+      ),
+      supersede_targets: Type.Optional(
+        Type.Record(Type.String(), Type.String(), {
+          description: "For supersede items: pageId → target page id (required, never guessed)",
+        }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const paths = getPaths(ctx.cwd);
+      const vaultCheck = inspectWritableVault(paths);
+      if (!vaultCheck.ok) {
+        return {
+          content: [
+            { type: "text", text: `Wiki vault error: ${vaultCheck.diagnostics[0].message}` },
+          ],
+          details: {
+            error: vaultCheck.diagnostics[0].code,
+            diagnostics: vaultCheck.diagnostics,
+          } as Record<string, unknown>,
+          isError: true,
+        };
+      }
+      const result = applyConsolidate(paths, {
+        proposalId: params.proposal_id,
+        accept: params.accept,
+        ...(params.reject ? { reject: params.reject } : {}),
+        ...(params.confirm ? { confirm: params.confirm } : {}),
+        ...(params.supersede_targets ? { supersedeTargets: params.supersede_targets } : {}),
+      });
+      if (!result.ok) {
+        return {
+          content: [{ type: "text", text: `⚠️ ${result.code}: ${result.message}` }],
+          details: { error: result.code } as Record<string, unknown>,
+          isError: true,
+        };
+      }
+      return {
+        content: [{ type: "text", text: result.report }],
+        details: {
+          dry_run: result.dryRun,
+          accepted: result.accepted,
+          rejected: result.rejected,
+          skipped: result.skipped,
+        } as Record<string, unknown>,
+      };
     },
   });
 }

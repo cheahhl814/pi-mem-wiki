@@ -28,6 +28,7 @@ import {
   consolidateOperation,
   ensurePageOperation,
   ingestOperation,
+  applyConsolidateOperation,
   lintOperation,
   logEventOperation,
   observeOperation,
@@ -571,6 +572,58 @@ server.registerTool(
       };
     }
     return { content: [{ type: "text" as const, text: result.report }] };
+  },
+);
+
+// ---- wiki_apply_consolidate (pi-mem-wiki fork M2) ----
+
+server.registerTool(
+  "wiki_apply_consolidate",
+  {
+    description:
+      "Apply a consolidation proposal produced by wiki_consolidate. DRY RUN by default (no confirm); confirm format '<proposalId>:<acceptedCount>'. cold = frontmatter lifecycle only (move-never-delete); supersede requires a named target; hub creates the page on explicit accept. Aborts if pages drifted since generation. Never merges or rewrites bodies.",
+    inputSchema: z.object({
+      proposal_id: z.string().describe("Proposal id from wiki_consolidate (P-YYYY-MM-DD-HHMM)"),
+      accept: z.array(z.string()).describe('Item ids: "cold:<pageId>" | "supersede:<pageId>" | "hub:<tag>"'),
+      reject: z.array(z.string()).optional().describe("Item ids explicitly rejected (ledger record)"),
+      confirm: z
+        .string()
+        .optional()
+        .describe("'<proposalId>:<acceptedCount>' to actually write; without it = dry run"),
+      supersede_targets: z.record(z.string(), z.string()).optional().describe("supersede: pageId → target id (required per item)"),
+    }),
+  },
+  async ({ proposal_id, accept, reject, confirm, supersede_targets }) => {
+    if (!hasVault()) {
+      return {
+        content: [
+          { type: "text" as const, text: "No wiki vault found. Set WIKI_ROOT or run wiki_bootstrap first." },
+        ],
+        isError: true,
+      };
+    }
+    const paths = getPaths();
+    const result = await applyConsolidateOperation(paths, {
+      proposalId: proposal_id,
+      accept,
+      ...(reject ? { reject } : {}),
+      ...(confirm ? { confirm } : {}),
+      ...(supersede_targets ? { supersedeTargets: supersede_targets } : {}),
+    });
+    if (!result.ok) {
+      return {
+        content: [{ type: "text" as const, text: `⚠️ ${result.code}: ${result.message}` }],
+        isError: true,
+      };
+    }
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: result.dryRun ? `[DRY RUN]\n${result.report}` : result.report,
+        },
+      ],
+    };
   },
 );
 

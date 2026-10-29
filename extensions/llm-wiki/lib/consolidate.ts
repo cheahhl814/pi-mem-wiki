@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { appendEvent, rebuildMetadataLight, type Registry } from "./metadata.js";
 import {
@@ -36,8 +37,25 @@ export interface ConsolidateCluster {
   pages: string[];
 }
 
+/**
+ * pi-mem-wiki fork (M2-a): one machine-readable apply item. `id` is the key
+ * (`cold:<pageId>` | `supersede:<pageId>` | `hub:<tag>`); `hashes` records the
+ * sha256 of each referenced page at proposal time — the apply step aborts if
+ * ANY of them drifted.
+ */
+export interface ConsolidateItem {
+  id: string;
+  action: "cold" | "supersede" | "hub";
+  pages: string[];
+  reason: string;
+  hashes: Record<string, string>;
+  tag?: string;
+  hubName?: string;
+}
+
 export interface ConsolidateResult {
   counts: ConsolidateCounts;
+  proposalId: string;
   proposalPath: string;
   report: string;
 }
@@ -53,7 +71,7 @@ export function runConsolidate(
   opts: { staleThreshold?: string; maxClusters?: number } = {},
 ): ConsolidateResult {
   assertWritableVault(paths);
-  const registry: Registry = readJson<Registry>(join(paths.meta, "registry.json"), {
+const registry: Registry = readJson<Registry>(join(paths.meta, "registry.json"), {
     version: "1.0",
     last_updated: "",
     pages: {},
@@ -64,6 +82,19 @@ export function runConsolidate(
   const stale: Array<{ id: string; note?: string }> = [];
   const coldPool: string[] = [];
   const tagClusters = new Map<string, string[]>();
+  // pi-mem-wiki fork (M2-a): machine-readable apply items. The apply step reads
+  // THESE — never the markdown — keyed ids, per-page content hashes for the
+  // freshness abort. Shape: {id, action, pages, reason, hashes, tag?, hubName?}.
+  const items: ConsolidateItem[] = [];
+
+  const hashPage = (id: string): string => {
+    const file = join(paths.wiki, `${id}.md`);
+    try {
+      return createHash("sha256").update(readFileSync(file, "utf8")).digest("hex");
+    } catch {
+      return ""; // unreadable page → empty hash; apply treats it as drift
+    }
+  };
 
   for (const [id, entry] of Object.entries(registry.pages)) {
     const lifecycle = normalizeLifecycle(entry.lifecycle);
@@ -91,7 +122,8 @@ export function runConsolidate(
       superseded_by: entry.superseded_by,
     };
     const timeInfo = evaluatePageTime(timeFields);
-    if (timeInfo.state === "stale" || timeInfo.state === "expired") {
+    const isStaleOrExpired = timeInfo.state === "stale" || timeInfo.state === "expired";
+    if (isStaleOrExpired) {
       stale.push({ id, note: timeInfo.note });
       coldPool.push(id);
     } else if (
@@ -99,6 +131,28 @@ export function runConsolidate(
       entry.relevance === "low"
     ) {
       coldPool.push(id);
+    }
+    // Item construction (M2-a):
+    if (isPacketish && UNPROMOTED.has(lifecycle) && (isStaleOrExpired || entry.relevance === "low")) {
+      items.push({
+        id: `cold:${id}`,
+        action: "cold",
+        pages: [id],
+        reason:
+          timeInfo.note ??
+          (entry.relevance === "low" ? "relevance: low un-promoted packet" : "stale un-promoted packet"),
+        hashes: { [id]: hashPage(id) },
+      });
+    } else if (!isPacketish && isStaleOrExpired) {
+      // Non-packet pages past validity: supersede (needs a user-named target;
+      // apply skips items without one).
+      items.push({
+        id: `supersede:${id}`,
+        action: "supersede",
+        pages: [id],
+        reason: timeInfo.note ?? "past time validity",
+        hashes: { [id]: hashPage(id) },
+      });
     }
   }
 
@@ -116,18 +170,38 @@ export function runConsolidate(
     clusters: clusters.length,
   };
 
+  // Hub items — one per cluster (apply creates the hub page ONLY when the
+  // item is explicitly accepted; folder = the cluster's dominant folder).
+  for (const c of clusters) {
+    items.push({
+      id: `hub:${c.tag}`,
+      action: "hub",
+      pages: c.pages,
+      reason: `${c.pages.length} un-promoted packets clustered by tag`,
+      tag: c.tag,
+      hashes: Object.fromEntries(c.pages.map((p) => [p, hashPage(p)])),
+    });
+  }
+
   // ── Durable proposal artifact (outputs/proposals/, gitignored area but
   // human-reviewable). This is the ONLY write this tool performs. ──
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const proposalId = `P-${fmtDate()}-${pad(now.getHours())}${pad(now.getMinutes())}`;
   const proposalDir = join(paths.outputs, "proposals");
   mkdirSync(proposalDir, { recursive: true });
-  const proposalPath = join(proposalDir, `consolidation-${fmtDate()}.md`);
+  const proposalPath = join(proposalDir, `consolidation-${proposalId}.md`);
 
   const lines: string[] = [
     "# Consolidation Proposal (proposal-only — nothing has been applied)",
+    `Proposal: ${proposalId}`,
     `Generated: ${fmtDate()}`,
     "",
-    "Review each section, then apply manually or in a next-session agent call.",
+    "Review each section, then apply with wiki_apply_consolidate",
+    "(dry-run first; confirm format `<proposalId>:<acceptedCount>`).",
     "This tool never writes wiki pages; the vault is authoritative in wiki/.",
+    "",
+    `Machine items: ${items.length} (${items.filter((i) => i.action === "cold").length} cold / ${items.filter((i) => i.action === "supersede").length} supersede / ${items.filter((i) => i.action === "hub").length} hub)`,
     "",
     "## A) PROMOTE — tag clusters of un-promoted packets (candidate hub pages)",
     clusters.length
@@ -166,10 +240,13 @@ export function runConsolidate(
 
   const report = lines.join("\n");
   writeFileSync(proposalPath, `${report}\n`, "utf8");
-  // Machine-readable counts for wiki_status/agents (extension-owned projection).
+  // Machine-readable items + counts for wiki_status/agents and the apply step
+  // (extension-owned projection; the apply step reads THIS, never markdown).
   writeJson(join(paths.discoveries, "consolidate.json"), {
-    counts,
+    proposal_id: proposalId,
     proposalPath,
+    counts,
+    items,
     generated: new Date().toISOString(),
   });
 
@@ -177,10 +254,11 @@ export function runConsolidate(
   // authoritative event, not a transient report.
   appendEvent(paths, {
     kind: "consolidate",
+    proposal_id: proposalId,
     proposal_path: proposalPath,
     ...counts,
   } as unknown as Parameters<typeof appendEvent>[1]);
   rebuildMetadataLight(paths);
 
-  return { counts, proposalPath, report };
+  return { counts, proposalId, proposalPath, report };
 }
