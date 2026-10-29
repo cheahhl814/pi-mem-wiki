@@ -1014,6 +1014,9 @@ export function registerWikiStatus(pi: ExtensionAPI): void {
         `QMD index: ${status.qmd.state}`,
         `QMD documents: ${status.qmd.totalDocuments} (${status.qmd.canonicalDocuments} canonical, ${status.qmd.evidenceDocuments} evidence)`,
         `QMD embeddings pending: ${status.qmd.needsEmbedding}`,
+        status.embeddings.embedded > 0
+          ? `Semantic embeddings: ${status.embeddings.embedded}/${status.totalPages} pages${status.embeddings.model ? `, model ${status.embeddings.model}` : ""}`
+          : "Semantic embeddings: none configured (lexical recall only)",
         `QMD package: ${status.qmd.qmdVersion}`,
         ...diagLines,
       ];

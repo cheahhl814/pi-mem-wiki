@@ -20,7 +20,9 @@
 > and applies time/lifecycle decay — decay is ranking-only, but with the
 > ambient minScore gate decayed pages effectively drop out of ambient
 > injection while staying fully recallable via explicit `wiki_recall`
-> (including `include_cold: true`).
+> (including `include_cold: true`). M1: a keyless loopback embedding endpoint
+> (`http://localhost:11434/v1` + Ollama `bge-m3`) is the recommended default —
+> `wiki_status` shows coverage, and the config guide documents it.
 
 
 **English** | <a href="./README.zh.md">中文</a> | <a href="./README.es.md">Español</a> | <a href="./README.ja.md">日本語</a> | <a href="./README.de.md">Deutsch</a> | <a href="./README.fr.md">Français</a> | <a href="./README.pt.md">Português</a> | <a href="./README.ru.md">Русский</a> | <a href="./README.ko.md">한국어</a> | <a href="./README.hi.md">हिंदी</a>

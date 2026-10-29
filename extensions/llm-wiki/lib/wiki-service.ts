@@ -1,5 +1,9 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import {
+  embeddingStorePath,
+  readEmbeddingStore,
+} from "./embeddings.js";
 import type { KnowledgeDiagnostic } from "./knowledge-document.js";
 import type { Registry } from "./metadata.js";
 import {
@@ -41,6 +45,12 @@ export interface WikiStatusSnapshot {
   blockingDiagnostics: KnowledgeDiagnostic[];
   lastUpdated: string;
   qmd: QmdGeneratedStatus;
+  /** pi-mem-wiki fork (M1): semantic-embedding coverage of the sidecar store. */
+  embeddings: {
+    hasStore: boolean;
+    embedded: number;
+    model?: string;
+  };
 }
 
 /**
@@ -209,6 +219,26 @@ export async function getWikiStatus(paths: VaultPaths): Promise<WikiStatusSnapsh
     blockingDiagnostics: diagnostics.filter((d) => d.severity === "error"),
     lastUpdated: registry?.last_updated || "",
     qmd: await readQmdIndexStatus(paths),
+    // pi-mem-wiki fork (M1): embedding coverage — embedded N / total, model X.
+    embeddings: ((): { hasStore: boolean; embedded: number; model?: string } => {
+      try {
+        const store = readEmbeddingStore(paths);
+        const entries = Object.values(store.entries);
+        const models = new Set(entries.map((e: { model: string }) => e.model));
+        return {
+          hasStore: existsSync(embeddingStorePath(paths)),
+          embedded: entries.length,
+          model:
+            models.size === 1
+              ? [...models][0]
+              : models.size > 1
+                ? `${models.size} models mixed`
+                : undefined,
+        };
+      } catch {
+        return { hasStore: false, embedded: 0 };
+      }
+    })(),
   };
 }
 

@@ -68,11 +68,32 @@ All of the above are viewable and editable in the `/wiki-settings` TUI (persists
 | `semanticWeight`       | 0.5      | Weight of the semantic sub-score in hybrid recall (clamped 0–1)                               |
 | `recallLinksThreshold` | 50       | Page-count gate for two-stage links-first recall (0 = always links-first, issue #68)          |
 | `recallSkillInlineMax` | 1600     | Max chars of a skill/case body inlined into recall output (0 = links only)                    |
-| `embeddingProvider`    | —        | Embedding provider (e.g. `openai`); embeddings stay off until this is set                     |
-| `embeddingModel`       | —        | Embedding model name (provider-specific)                                                      |
-| `embeddingBaseUrl`     | —        | Optional API base URL override for the embedding provider                                     |
-| `embeddingApiKey`      | —        | API key literal — prefer `embeddingApiKeyEnv` so no secret lands in settings                  |
+| `embeddingProvider`    | —        | Embedding provider (e.g. `openai-compatible`); embeddings stay off until this is set. **Fork (M1): a loopback base URL (`localhost`/`127.0.0.1`/`::1`) needs NO API key** |
+| `embeddingModel`       | —        | Embedding model name (provider-specific). **Fork default recommendation: `bge-m3` via Ollama — multilingual, CJK-capable** |
+| `embeddingBaseUrl`     | —        | Optional API base URL override for the embedding provider (e.g. `http://localhost:11434/v1` for Ollama) |
+| `embeddingApiKey`      | —        | API key literal — prefer `embeddingApiKeyEnv` so no secret lands in settings. Unnecessary for loopback URLs (fork M1) |
 | `embeddingApiKeyEnv`   | —        | Name of the environment variable holding the embedding API key                                |
+| `projectId`            | —        | Fork (v2): explicit project scope id for ambient recall; default = slugified vault-root basename |
+
+### Local vectors by default (fork M1)
+
+Recommended zero-cost configuration (nothing leaves the machine):
+
+```json
+{
+  "llm-wiki": {
+    "embeddingProvider": "openai-compatible",
+    "embeddingBaseUrl": "http://localhost:11434/v1",
+    "embeddingModel": "bge-m3"
+  }
+}
+```
+
+With Ollama running and `ollama pull bge-m3`, `wiki_reindex_embeddings` backfills the
+whole vault (2k pages ≈ minutes, local). `wiki_status` shows the coverage line
+(`Semantic embeddings: N/total pages, model bge-m3`). Recall then blends semantic
+cosine with the lexical score — paraphrase and CJK↔English queries stop being
+structural misses. If Ollama is down, recall silently falls back to lexical.
 
 `taskModelBaseUrl`, `taskModelApiKey`, and `taskModelApiKeyEnv` are additive
 settings for the MCP host's synchronous ingest lane. Pi still resolves its

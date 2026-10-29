@@ -467,7 +467,6 @@ export function resolveEmbedder(config: TaskConfig): Embedder | undefined {
 
   const keyEnv = config.embeddingApiKeyEnv?.trim() || "OPENAI_API_KEY";
   const apiKey = config.embeddingApiKey?.trim() || process.env[keyEnv]?.trim();
-  if (!apiKey) return undefined;
 
   const model = config.embeddingModel?.trim() || DEFAULT_EMBEDDING_MODEL;
   const baseUrl =
@@ -475,7 +474,31 @@ export function resolveEmbedder(config: TaskConfig): Embedder | undefined {
     process.env.OPENAI_BASE_URL?.trim() ||
     DEFAULT_EMBEDDING_BASE_URL;
 
-  return { model, embed: createOpenAIEmbedFn({ apiKey, baseUrl, model }) };
+  // pi-mem-wiki fork (M1): keyless LOOPBACK exemption. An OpenAI-compatible
+  // endpoint on localhost/127.0.0.1/::1 (Ollama, LM Studio, vLLM) does not
+  // need an API key — the plan's "local vectors by default" goal. Remote
+  // URLs still require one. The placeholder bearer avoids sending the literal
+  // string "Bearer undefined" (Ollama ignores Authorization anyway).
+  if (!apiKey && !isLoopbackUrl(baseUrl)) return undefined;
+  const effectiveKey = apiKey || "pi-mem-wiki-keyless-loopback";
+
+  return { model, embed: createOpenAIEmbedFn({ apiKey: effectiveKey, baseUrl, model }) };
+}
+
+/** True when the URL points at the local machine (loopback exemption). */
+export function isLoopbackUrl(rawUrl: string): boolean {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase();
+    return (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host === "[::1]"
+    );
+  } catch {
+    return false;
+  }
 }
 
 // ── background launch helpers (used by tools/guardrails) ──
