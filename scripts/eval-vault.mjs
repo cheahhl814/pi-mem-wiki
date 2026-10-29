@@ -37,9 +37,9 @@ if (!existsSync(libUrl("recall.js"))) {
   process.exit(1);
 }
 
-let searchWiki, searchWikiLayered, resolveVaultPaths;
-({ searchWiki, searchWikiLayered } = await import(libUrl("recall.js").href));
-({ resolveVaultPaths } = await import(libUrl("utils.js").href));
+let searchWiki, searchWikiHybrid, resolveVaultPaths, loadTaskConfig;
+({ searchWiki, searchWikiHybrid } = await import(libUrl("recall.js").href));
+({ resolveVaultPaths, loadTaskConfig } = await import(libUrl("utils.js").href));
 
 const evalSet = JSON.parse(readFileSync(queriesArg, "utf8"));
 const paths = resolveVaultPaths(rootArg);
@@ -70,11 +70,18 @@ for (const r of lexicalRows) console.log(`  ${r.id} rank=${String(r.rank).padEnd
 
 if (layers) {
   const layeredRows = [];
+  ({ loadTaskConfig } = await import(libUrl("task-config.js").href));
+  const config = loadTaskConfig(rootArg) ?? {};
+  // Hybrid: searchWikiHybrid resolves the embedder from config (keyless
+  // loopback per fork M1); degrades to lexical when Ollama is down.
   for (const q of evalSet.queries) {
-    const results = await searchWikiLayered(paths, q.query, 5, 0, true, undefined, projectId ? { projectId } : undefined);
+    const results = await searchWikiHybrid(paths, q.query, 5, 0, true, {
+      config,
+      ...(projectId ? { scopeFilter: { projectId } } : {}),
+    });
     const rank = q.expected ? results.findIndex((r) => r.id === q.expected) + 1 || 0 : 0;
-    layeredRows.push({ id: q.id, expected: q.expected, rank: rank || null });
+    layeredRows.push({ id: q.id, expected: q.expected, rank: rank || null, top1: results[0]?.id ?? null });
   }
-  grade(layeredRows, "LAYERED (hybrid if vectors exist)");
-  for (const r of layeredRows) console.log(`  ${r.id} rank=${String(r.rank).padEnd(4)}`);
+  grade(layeredRows, "LAYERED (hybrid: embeddings + lexical)");
+  for (const r of layeredRows) console.log(`  ${r.id} rank=${String(r.rank).padEnd(4)} top1=${String(r.top1 ?? "-").slice(0, 60)}`);
 }
