@@ -1387,7 +1387,9 @@ export function registerWikiLogEvent(pi: ExtensionAPI): void {
     promptSnippet: "Log an event to the wiki activity log",
     promptGuidelines: ["Use wiki_log_event to record significant actions manually."],
     parameters: Type.Object({
-      kind: Type.String({ description: "Event kind (e.g., ingest, query, decision)" }),
+      kind: Type.Optional(
+        Type.String({ description: "Event kind (e.g., ingest, query, decision). Optional — defaults to \"custom\" when omitted." }),
+      ),
       details: Type.Optional(Type.Object({}, { description: "Additional event fields" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -1406,7 +1408,11 @@ export function registerWikiLogEvent(pi: ExtensionAPI): void {
         };
       }
 
-      const kind = typeof params.kind === "string" ? params.kind.trim() : "";
+      // Arg-tolerance fix: kind may be OMITTED (the observed 30d failure mode was
+      // "must have required properties kind") — default to "custom". A kind that is
+      // PRESENT but empty/whitespace is still rejected (OKF boundary contract).
+      const kindIsMissing = typeof params.kind === "undefined" || params.kind === null;
+      const kind = kindIsMissing ? "custom" : (typeof params.kind === "string" ? params.kind.trim() : "");
       if (!kind) {
         return {
           content: [{ type: "text", text: "Event kind must be a non-empty string" }],

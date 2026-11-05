@@ -476,3 +476,23 @@ export function isProtectedPath(
     return { protected: true, reason: "Cannot safely resolve mutation path." };
   }
 }
+
+/**
+ * Derive a reasonable short title from freeform text (used when a caller
+ * omits the title field — the dominant wiki_observe/wiki_retro failure mode:
+ * validation refuses the call outright, so the observation is lost).
+ * Takes the first meaningful line, then the first sentence, clamped to max chars.
+ */
+export function deriveTitle(text: string, max = 80): string {
+	const t = (text ?? "").trim();
+	if (!t) return "Untitled";
+	const firstLine = t
+		.split(/\r?\n/)
+		.map((l) => l.trim())
+		.find((l) => l && !l.startsWith("[")) ?? t;
+	const cleaned = firstLine.replace(/^#+\s*/, "").replace(/^[*\->]+\s*/, "").trim();
+	const sentence = cleaned.match(/^.+?[.!?](\s|$)/)?.[0] ?? cleaned;
+	let out = sentence.trim() || cleaned || t.slice(0, max);
+	if (out.length > max) out = out.slice(0, Math.max(1, max - 1)).trimEnd() + "…";
+	return out || "Untitled";
+}
