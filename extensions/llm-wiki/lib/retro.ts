@@ -7,7 +7,7 @@ import { applyWikilinkGate, buildWikilinkIndex } from "./knowledge-links.js";
 import { appendEvent, rebuildMetadataLight } from "./metadata.js";
 import type { Runtime } from "./runtime.js";
 import { loadTaskConfig, resolveWikilinkValidation } from "./task-config.js";
-import { fmtDate, readJson, resolveVaultPaths, type VaultPaths } from "./utils.js";
+import { deriveTitle, fmtDate, readJson, resolveVaultPaths, slugify, type VaultPaths } from "./utils.js";
 import { assertWritableVault, inspectWritableVault } from "./vault-format.js";
 
 // ─── Public API ────────────────────────────────────────
@@ -115,13 +115,18 @@ export function registerWikiRetro(pi: ExtensionAPI, runtime?: Runtime): void {
       "The insight will be auto-surfaced by wiki_recall in future sessions.",
     ],
     parameters: Type.Object({
-      slug: Type.String({
-        description:
-          "Unique kebab-case identifier (e.g. 'jwt-revocation-pattern'). Used for lookups.",
-      }),
-      title: Type.String({
-        description: "Short descriptive title (60 chars max). Noun phrase, not a sentence.",
-      }),
+      slug: Type.Optional(
+        Type.String({
+          description:
+            "Unique kebab-case identifier (e.g. 'jwt-revocation-pattern'). Used for lookups. Optional — derived from the title when omitted.",
+        }),
+      ),
+      title: Type.Optional(
+        Type.String({
+          description:
+            "Short descriptive title (60 chars max). Noun phrase, not a sentence. Optional — derived from the body's first sentence when omitted.",
+        }),
+      ),
       body: Type.String({
         description:
           "Markdown body with [[wikilinks]] to related wiki pages. Explain what was learned.",
@@ -134,6 +139,11 @@ export function registerWikiRetro(pi: ExtensionAPI, runtime?: Runtime): void {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = resolveVaultPaths(ctx.cwd ?? process.cwd());
+      // Arg-tolerance fix: slug and title are optional at the schema level;
+      // derive them (title from the body's first sentence, slug from the
+      // title) so a mis-shaped call is recorded instead of rejected.
+      const titleResolved = (params.title && params.title.trim()) || deriveTitle(params.body, 60);
+      const slugResolved = (params.slug && params.slug.trim()) || slugify(titleResolved);
 
       const vaultCheck = inspectWritableVault(paths);
       if (!vaultCheck.ok) {
@@ -164,7 +174,7 @@ export function registerWikiRetro(pi: ExtensionAPI, runtime?: Runtime): void {
         const gate = applyWikilinkGate(
           body,
           buildWikilinkIndex(Object.keys(registry.pages)),
-          `sources/${params.slug}`,
+          `sources/${slugResolved}`,
           mode,
         );
         wikilinkIssues = gate.diagnostics.map((d) => d.message);
@@ -189,7 +199,7 @@ export function registerWikiRetro(pi: ExtensionAPI, runtime?: Runtime): void {
       }
       let result: RetroResult;
       try {
-        result = saveInsight(paths, params.slug, params.title, body, params.category, {
+        result = saveInsight(paths, slugResolved, titleResolved, body, params.category, {
           rebuild: !runtime,
         });
       } catch (error: unknown) {
@@ -214,7 +224,7 @@ export function registerWikiRetro(pi: ExtensionAPI, runtime?: Runtime): void {
           {
             type: "text",
             text: [
-              `🧠 **Insight saved**: ${params.title}`,
+              `🧠 **Insight saved**: ${titleResolved}`,
               "",
               `- Page: \`${result.sourcePagePath}\``,
               "",
@@ -226,8 +236,8 @@ export function registerWikiRetro(pi: ExtensionAPI, runtime?: Runtime): void {
           },
         ],
         details: {
-          slug: params.slug,
-          title: params.title,
+          slug: slugResolved,
+          title: titleResolved,
           category: params.category || null,
           wikilinkIssues,
         } as Record<string, unknown>,

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { scheduleReindex } from "./indexing.js";
+import { deriveTitle } from "./utils.js";
 import { createKnowledgeDocument, writeKnowledgeDocumentFile } from "./knowledge-document.js";
 import { appendEvent, rebuildMetadataLight } from "./metadata.js";
 import type { Runtime } from "./runtime.js";
@@ -164,11 +165,14 @@ export function registerWikiObserve(
       "Observations compound across sessions via wiki_recail.",
     ],
     parameters: Type.Object({
-      title: Type.String({
-        description:
-          "Short descriptive title (≤80 chars). Noun phrase, not a sentence. " +
-          "Example: 'JWT auth middleware added' or 'Postgres migration constraint discovered'",
-      }),
+      title: Type.Optional(
+        Type.String({
+          description:
+            "Short descriptive title (≤80 chars). Noun phrase, not a sentence. " +
+            "Example: 'JWT auth middleware added' or 'Postgres migration constraint discovered'. " +
+            "Optional — derived from the content's first sentence when omitted.",
+        }),
+      ),
       content: Type.String({
         description:
           "The observation in plain prose. What happened, was decided, or was learned. " +
@@ -176,20 +180,22 @@ export function registerWikiObserve(
           "quantitative results. Example: 'User decided to use JWT with refresh tokens. " +
           "Implementation at src/auth/jwt.ts. Tests passing.'",
       }),
-      relevance: Type.Union(
-        [
-          Type.Literal("low"),
-          Type.Literal("medium"),
-          Type.Literal("high"),
-          Type.Literal("critical"),
-        ],
-        {
-          description:
-            "Relevance level: low (routine), medium (task context), " +
-            "high (non-trivial decisions/constraints), critical (user identity, " +
-            "persistent preferences, completed work that must not be redone). " +
-            "Default: medium. Be honest — most observations are medium or low.",
-        },
+      relevance: Type.Optional(
+        Type.Union(
+          [
+            Type.Literal("low"),
+            Type.Literal("medium"),
+            Type.Literal("high"),
+            Type.Literal("critical"),
+          ],
+          {
+            description:
+              "Relevance level: low (routine), medium (task context), " +
+              "high (non-trivial decisions/constraints), critical (user identity, " +
+              "persistent preferences, completed work that must not be redone). " +
+              "Default: medium. Be honest — most observations are medium or low.",
+          },
+        ),
       ),
       tags: Type.Optional(
         Type.String({
@@ -207,6 +213,12 @@ export function registerWikiObserve(
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = resolveVaultPaths(ctx.cwd ?? process.cwd());
+      // Arg-tolerance fix: title and relevance are optional at the schema level;
+      // derive the title from the content and default relevance to "medium" so
+      // a mis-shaped call is recorded instead of rejected (the dominant 30d
+      // failure mode for wiki_observe was missing title/relevance).
+      const titleResolved = (params.title && params.title.trim()) || deriveTitle(params.content);
+      const relevanceResolved = params.relevance ?? "medium";
 
       const vaultCheck = inspectWritableVault(paths);
       if (!vaultCheck.ok) {
@@ -228,9 +240,9 @@ export function registerWikiObserve(
       const result = saveObservation(
         paths,
         {
-          title: params.title,
+          title: titleResolved,
           content: params.content,
-          relevance: params.relevance,
+          relevance: relevanceResolved,
           tags: params.tags,
           source_context: params.source_context,
         },
@@ -249,17 +261,17 @@ export function registerWikiObserve(
         reminderState.observeDoneThisSession = true;
       }
 
-      const relevanceEmoji = RELEVANCE_EMOJIS[params.relevance] ?? "📝";
+      const relevanceEmoji = RELEVANCE_EMOJIS[relevanceResolved] ?? "📝";
 
       return {
         content: [
           {
             type: "text",
             text: [
-              `${relevanceEmoji} **Observation saved**: ${params.title}`,
+              `${relevanceEmoji} **Observation saved**: ${titleResolved}`,
               "",
               `- Page: \`${result.pagePath}\``,
-              `- Relevance: ${params.relevance}`,
+              `- Relevance: ${relevanceResolved}`,
               params.tags ? `- Tags: ${params.tags}` : "",
               "",
               "This observation is now searchable via wiki_recall. " +
@@ -271,8 +283,8 @@ export function registerWikiObserve(
         ],
         details: {
           slug: result.slug,
-          title: params.title,
-          relevance: params.relevance,
+          title: titleResolved,
+          relevance: relevanceResolved,
           tags: params.tags || null,
         } as Record<string, unknown>,
       };
