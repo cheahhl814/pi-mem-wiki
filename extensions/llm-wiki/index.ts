@@ -24,6 +24,7 @@ import {
 } from "./lib/recall.js";
 import { registerWikiRetro } from "./lib/retro.js";
 import { registerBackgroundRuntime } from "./lib/runtime.js";
+import { maybeAutoDigest, registerWikiDigest } from "./lib/session-digest.js";
 import { registerWikiSessionCapture } from "./lib/session-pages.js";
 import { registerWikiSettingsCommand } from "./lib/settings-command.js";
 import { slugify } from "./lib/utils.js";
@@ -147,6 +148,15 @@ export default function (pi: ExtensionAPI) {
   registerWikiTrajectoriesCommand(pi);
   if (sessionPagesOn) {
     registerWikiSessionCapture(pi, () => runtime.config);
+    registerWikiDigest(pi, runtime);
+    // Automatic compaction (§4): cheap gate check per turn, build in background.
+    pi.on("turn_end", (_event, ctx) => {
+      try {
+        maybeAutoDigest(runtime, ctx, ctx.cwd ?? process.cwd(), runtime.config);
+      } catch (err) {
+        console.warn(`[llm-wiki] digest gate check skipped: ${(err as Error).message}`);
+      }
+    });
   }
   // Model selection surface (issue #69): /wiki-model command to view/set the
   // background task model. The taskModel config field + resolveModel already

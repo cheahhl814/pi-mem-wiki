@@ -382,3 +382,39 @@ export function applyConsolidate(
     report,
   };
 }
+/**
+ * pi-mem-wiki fork (session memory §4 step 4 / §8.1-4): frontmatter-only cold
+ * demotion through the same serializer path as the confirmed apply above —
+ * read → patch `lifecycle: cold` → write. Touches no other field, never moves
+ * or deletes. Idempotent: already-cold pages are left untouched.
+ */
+export function demoteToCold(
+  paths: VaultPaths,
+  pageIds: string[],
+): { demoted: string[]; skipped: Array<{ id: string; reason: string }> } {
+  assertWritableVault(paths);
+  const demoted: string[] = [];
+  const skipped: Array<{ id: string; reason: string }> = [];
+  for (const id of pageIds) {
+    const file = join(paths.wiki, `${id}.md`);
+    let parsed: ReturnType<typeof readKnowledgeDocumentFile>;
+    try {
+      parsed = readKnowledgeDocumentFile(file, id);
+    } catch {
+      skipped.push({ id, reason: "page missing" });
+      continue;
+    }
+    if (!parsed.ok) {
+      skipped.push({ id, reason: "page no longer parses" });
+      continue;
+    }
+    if (parsed.document.frontmatter.lifecycle !== "cold") {
+      writeKnowledgeDocumentFile(
+        file,
+        patchKnowledgeDocument(parsed.document, { fields: { lifecycle: "cold" } }),
+      );
+    }
+    demoted.push(id);
+  }
+  return { demoted, skipped };
+}
