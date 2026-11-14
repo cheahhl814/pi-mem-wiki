@@ -1,6 +1,6 @@
 # Design: Session memory pages + derived digest (pi-mem-wiki)
 
-Status: proposal (review requested from implementation agent)
+Status: reviewed 2026-11-14 — see §8.1 for review amendments (they override earlier sections where they conflict)
 Date: 2026-11-14
 Author: pi-mem-wiki maintainer (design extracted from 2026-11-14 design session)
 
@@ -41,7 +41,7 @@ Non-goals:
 ### 2.1 Raw session page
 
 Path: `sessions/<workspace-slug>/<yyyy-mm-dd>-<short-session-id>.md`
-(`<workspace-slug>` = the same slug the wiki already derives from the vault root; honour `llm-wiki.projectId` when set.)
+(`<workspace-slug>` = `slugify(llm-wiki.projectId ?? basename(vault root))` — the ambient-recall project id, **always slugified** before it becomes a path segment; a verbatim `projectId` such as `../x` must never escape `sessions/`.)
 
 Frontmatter:
 ```yaml
@@ -51,6 +51,8 @@ session_id: <id-or-date-seq>
 created: 2026-11-14T...
 closed: 2026-11-14T...        # set exactly once at freeze
 lifecycle: raw                 # raw → (digest consumes) → cold
+scope: project:<slug>          # keeps shared vaults project-isolated under ambient scopeFilter
+body_sha256: <hex>             # hash of the body at freeze; lint detects edits
 ```
 
 Body grammar (strict, one claim per section, heading is the claim):
@@ -72,7 +74,7 @@ Chose proposal P-2026-11-12-0720 split … (source: session exit)
 ```
 Section types: `decision:`, `fact:`, `open:`, `todo:`, `note:`. Anything not fitting is dropped at write time — noise is the enemy.
 
-Invariant: after `closed` is set, the file is never rewritten. Corrections happen in the **next** session's page (`corrects:` field optional).
+Invariant: after `closed` is set, the body and every frontmatter field except `lifecycle` are immutable. The **only** permitted mutation is the single transition `lifecycle: raw → cold`, performed by compaction (§4 step 4). Corrections happen in the **next** session's page (`corrects:` field optional).
 
 ### 2.2 Digest page
 
@@ -109,14 +111,14 @@ Explicit mid-session trigger: `wiki_observe` is unchanged; nothing in this desig
 ## 4. Compaction (digest build)
 
 Gate (all required):
-- ≥ 5 closed raw pages for the workspace with `created > digest.digested_through`, **and**
+- ≥ 5 closed raw pages for the workspace with `closed > digest.digested_through`, **and** (keyed on `closed`, not `created`: a session that started before the last build but closed after it must still be consumed)
 - ≥ 24 h since last digest build, **and**
-- no live lock (`<vault>/meta/digest-<workspace>.lock`; stale > 30 min reclaimed).
+- no live lock (`<vault>/.llm-wiki/meta/digest-<workspace>.lock`, i.e. `paths.meta`; stale > 30 min reclaimed).
 
 Steps:
 1. Acquire lock. Collect unconsumed raw pages (oldest first, cap N=50 per run).
 2. Model call: merge raw sections into digest. Rules embedded in prompt: absolute dates, drop stale `open`/`todo` items or mark resolved when later raw pages settle them, dedupe against existing digest, never invent.
-3. Write new digest atomically (tmp + rename). Set `digested_through`.
+3. Write new digest atomically (tmp + rename). Set `digested_through` = max `closed` of the consumed pages.
 4. Cold-demote consumed raw pages via the **existing** apply machinery (`lifecycle: cold`, frontmatter-only) — extend the existing `wiki_apply_consolidate` cold path or a thin internal call; no new deletion/rewrite code.
 5. Release lock, emit event, update `meta/index.md` via existing rebuild path.
 
@@ -130,7 +132,7 @@ Trigger surfaces:
 ## 5. Non-negotiables (reject in review if violated)
 
 - Raw pages: write-once; no API path rewrites them (test this).
-- Digest build is all-or-nothing; any exception → no file writes, lock released.
+- Digest build is all-or-nothing up to and including the digest rename; any exception before it → no file writes, lock released. Cold demotion after the rename is a separate, idempotent step (see §4 "Partial failures").
 - Cold demotion only via existing frontmatter path; no other mutation of source vault pages.
 - Feature flag off ⇒ zero behavioral change to recall, registry, lint, or obs flow (test this).
 - No new required dependency; model calls go through the existing task-config/embedder plumbing.
@@ -157,7 +159,58 @@ Per-slice: `pnpm test`, `pnpm typecheck`, `pnpm lint` green. Keep the diff focus
 ## 8. Acceptance demo (for review)
 
 With the flag on and a scratch vault:
-1. Three scripted sessions → 3 raw pages appear; `wiki_recall` never returns them ambiently.
+1. Five scripted sessions → 5 raw pages appear; neither ambient recall nor default `wiki_recall` returns them (`include_raw: true` does). (Five, not three: the §4 gate refuses fewer than 5 without `--force`.)
 2. `wiki_digest --dry-run` prints planned demotions; run for real → digest exists, raw pages `lifecycle: cold`, `meta/events.jsonl` gains `kind: "session-digest"`.
 3. `wiki_recall "<topic from session 1>"` returns the digest chunk, not the raw page.
 4. Flag off → `pnpm test` green with zero session pages created anywhere.
+
+## 8.1 Review amendments
+
+Recorded by the implementation review (2026-11-14). Scope is unchanged; these
+pin down areas where the original text was unsound or under-specified.
+
+1. **Shutdown time budget (unsound as written).** oh-my-pi caps every
+   `session_shutdown` handler at 2000 ms (see `lib/runtime.ts`, upstream issue
+   #263). A ~120 s model call cannot run there. The exit hook therefore races
+   the summarizer against a host budget: pi → `sessionPages.summaryTimeoutSec`
+   (default 120); omp → 1500 ms, so in practice omp sessions get the
+   deterministic fallback. The fallback is written in-budget either way. A
+   session is never lost, but omp sessions get the low-quality page.
+2. **Write-once versus cold demotion.** These contradicted each other. Resolved in §2.1:
+   the body and all frontmatter except `lifecycle` are frozen. `raw → cold` is the only
+   transition. The writer refuses to clobber, using a hard-link no-clobber publish of a temp file.
+   Lint verifies `body_sha256`. Agent-side edits through generic editing tools are
+   *detected* (by lint) but not *blocked*. A tool_call guardrail for `wiki/sessions/**` is a
+   follow-up, not v1.
+3. **Resume and reload.** `reload` keeps the session alive, so no page is written.
+   A resumed session that exits again reuses its session id. The filename gets
+   a numeric suffix (`-2`, `-3`) and the second page re-summarizes the whole
+   branch. Duplicated claims are accepted in v1, and the digest step dedupes them.
+4. **"Existing apply machinery" is not directly reusable.** `applyConsolidate`
+   is gated on a stored proposal plus a confirm token. Demotion instead uses the
+   same frontmatter primitives (`readKnowledgeDocumentFile` →
+   `patchKnowledgeDocument({lifecycle:"cold"})` → `writeKnowledgeDocumentFile`)
+   via a small exported helper in `consolidate-apply.ts`. No other field is touched.
+5. **Model plumbing.** "task-config/embedder plumbing" is read as: model via
+   `Runtime.resolveModel` (honours `llm-wiki.taskModel`), call via the existing
+   `runSubAgent` with a single `submit` tool. The embedder is for vectors and is
+   not involved. Core functions take an injectable `complete()` so tests stay offline.
+6. **Flag off really means off.** Registering a tool adds to every system prompt, so
+   `wiki_session_capture` and `wiki_digest` are registered **only** when
+   `llm-wiki.sessionPages.enabled` is true. This uses a factory-time gate, like `trajectories`.
+   The recall exclusion keys on `type: session` **and** a `sessions/` path, so a
+   pre-existing custom `session` type elsewhere is unaffected.
+7. **Lint.** Session pages are archives by design. They are exempt from orphan
+   findings, and nothing else about orphan detection changes. New findings cover
+   a session-page body hash mismatch, an illegal `lifecycle`, and a digest over the cap.
+8. **Open questions resolved.**
+   - Q1: project vault only. When cwd has no project vault (personal fallback), no page is written.
+   - Q2: off by default.
+   - Q3: archive. On overflow, the oldest dated bullets move to `digests/<ws>-archive-<n>.md`.
+   - Q4: no change. QMD indexes whatever it already indexes.
+   - Q5: no cross-link in v1.
+   - Q6: summarizer output is capped at 4096 tokens (the `runSubAgent` default).
+9. **Known ceilings.** `closed` comparisons assume one clock; a vault shared
+   across machines with skewed clocks can mis-order pages around a build. The lock is
+   per workspace and per vault, not cross-host safe (same class as the existing
+   last-writer-wins note for shared vaults).
