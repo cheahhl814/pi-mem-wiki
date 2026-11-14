@@ -215,9 +215,11 @@ export interface TaskConfig {
    * raw pages + gated digest. OPT-IN, default OFF — only an explicit
    * `sessionPages.enabled: true` registers the tools and the exit hook.
    * `summaryTimeoutSec` bounds the exit summarizer under pi (default 120);
-   * omp's 2 s shutdown cap always wins there.
+   * omp's 2 s shutdown cap always wins there. `personalFallback` (default
+   * OFF) writes into the personal vault when no project vault exists, keyed
+   * by git-toplevel slug (DESIGN-session-memory.md §8.1-10).
    */
-  sessionPages?: { enabled?: boolean; summaryTimeoutSec?: number };
+  sessionPages?: { enabled?: boolean; summaryTimeoutSec?: number; personalFallback?: boolean };
 }
 
 export const TASK_DEFAULTS: TaskConfig = {};
@@ -283,6 +285,11 @@ export function trajectoriesEnabled(config: TaskConfig | undefined): boolean {
 /** Session memory pages (DESIGN-session-memory.md): default OFF, explicit `true` only. */
 export function sessionPagesEnabled(config: TaskConfig | undefined): boolean {
   return config?.sessionPages?.enabled === true;
+}
+
+/** Personal-vault fallback for session pages: needs BOTH flags, explicit `true` only. */
+export function sessionPersonalFallbackEnabled(config: TaskConfig | undefined): boolean {
+  return sessionPagesEnabled(config) && config?.sessionPages?.personalFallback === true;
 }
 
 const SETTINGS_KEY = "llm-wiki";
@@ -386,8 +393,10 @@ function readNamespacedConfig(path: string): Partial<TaskConfig> {
     const sp = section.sessionPages;
     if (sp && typeof sp === "object" && !Array.isArray(sp)) {
       const v = sp as Record<string, unknown>;
-      const spOut: { enabled?: boolean; summaryTimeoutSec?: number } = {};
+      const spOut: { enabled?: boolean; summaryTimeoutSec?: number; personalFallback?: boolean } =
+        {};
       if (typeof v.enabled === "boolean") spOut.enabled = v.enabled;
+      if (typeof v.personalFallback === "boolean") spOut.personalFallback = v.personalFallback;
       if (typeof v.summaryTimeoutSec === "number" && v.summaryTimeoutSec > 0) {
         spOut.summaryTimeoutSec = v.summaryTimeoutSec;
       }

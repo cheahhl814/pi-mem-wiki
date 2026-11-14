@@ -204,7 +204,7 @@ pin down areas where the original text was unsound or under-specified.
    findings, and nothing else about orphan detection changes. New findings cover
    a session-page body hash mismatch, an illegal `lifecycle`, and a digest over the cap.
 8. **Open questions resolved.**
-   - Q1: project vault only. When cwd has no project vault (personal fallback), no page is written.
+   - Q1: project vault by default. When cwd has no project vault, no page is written unless the separate personal fallback is on (see item 10).
    - Q2: off by default.
    - Q3: archive. On overflow, the oldest dated bullets move to `digests/<ws>-archive-<n>.md`.
    - Q4: no change. QMD indexes whatever it already indexes.
@@ -214,3 +214,35 @@ pin down areas where the original text was unsound or under-specified.
    across machines with skewed clocks can mis-order pages around a build. The lock is
    per workspace and per vault, not cross-host safe (same class as the existing
    last-writer-wins note for shared vaults).
+10. **Personal-vault fallback (decided 2026-11-14, opt-in).** Most repos have no
+    `.llm-wiki/`, so a second flag, `sessionPages.personalFallback` (default OFF,
+    effective only together with `enabled`), lets session pages and digests go to
+    the **initialized** personal vault when no project vault exists. The personal
+    vault is never bootstrapped for this.
+    - **Precedence:** a real project vault always wins, with its unchanged slug.
+      `WIKI_HOME` counts as the personal vault, not as a project, even though
+      `resolveProjectVaultRoot` reports it as a root. Without the fallback it gets no pages.
+    - **Workspace slug:** `slugify(basename(git toplevel))` — the nearest ancestor
+      holding `.git` (a directory, or a file for worktrees and submodules) — else the
+      cwd basename. It is never `basename(home)`, which would collapse every repo into
+      one workspace and one digest. `llm-wiki.projectId` is deliberately ignored here:
+      set globally, it would recreate exactly that collapse.
+    - **Scope consistency:** when the fallback is on and the personal vault is the
+      ambient primary, the ambient `scopeFilter.projectId` is the same repo slug the
+      writer stamps as `scope: project:<slug>`. Otherwise the ambient id is the
+      pre-feature expression, byte for byte (`ambientScopeId`). Existing personal pages
+      scoped `project:<home-basename>` stop matching ambiently in that configuration.
+      Unscoped pages are unaffected.
+    - **Residual risks (accepted, documented):**
+      - *Shared-vault write contention:* concurrent sessions in different repos
+        write to one vault. Page publish is no-clobber and the digest lock is per
+        workspace, but `events.jsonl` appends and the metadata rebuild remain
+        last-writer-wins, as for every other personal-vault write today.
+      - *Explicit-recall noise:* the personal layer of `wiki_recall` ignores project
+        scope by design, so every repo's digest is visible to explicit recall from any repo.
+      - *Cross-harness visibility:* a personal vault shared through
+        `WIKI_HOME`/`WIKI_ROOT` with MCP or other harnesses exposes
+        transcript-derived text to them. Secret redaction runs before freeze, but it
+        matches patterns and does not understand what it reads.
+      - *Slug collisions:* two repos with the same toplevel basename share a
+        workspace (and therefore a digest).

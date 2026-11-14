@@ -25,9 +25,12 @@ import {
 import { registerWikiRetro } from "./lib/retro.js";
 import { registerBackgroundRuntime } from "./lib/runtime.js";
 import { makeComplete, maybeAutoDigest, registerWikiDigest } from "./lib/session-digest.js";
-import { registerSessionShutdown, registerWikiSessionCapture } from "./lib/session-pages.js";
+import {
+  ambientScopeId,
+  registerSessionShutdown,
+  registerWikiSessionCapture,
+} from "./lib/session-pages.js";
 import { registerWikiSettingsCommand } from "./lib/settings-command.js";
-import { slugify } from "./lib/utils.js";
 import {
   autoRecallEnabled,
   loadTaskConfig,
@@ -356,7 +359,9 @@ Then call wiki_bootstrap with the inferred topic and mode to finalize the setup.
       // filtered out; unscoped and `global` pages always match. Project id =
       // explicit llm-wiki.projectId setting when configured, else slugified
       // VAULT ROOT basename (review: cwd basename breaks from subdirectories).
-      const ambientProjectId = runtime.config?.projectId ?? slugify(basename(paths.root));
+      // Session-memory personal fallback: repo slug when the personal vault is
+      // primary and the flag is on; otherwise the identical expression above.
+      const ambientProjectId = ambientScopeId(paths, process.cwd(), runtime.config);
       const results = await searchWikiHybrid(paths, prompt, 3, 5, false, {
         config: runtime.config,
         scopeFilter: { projectId: ambientProjectId },

@@ -28,9 +28,8 @@ import {
   DIGEST_MAX_BYTES,
   DIGEST_MAX_LINES,
   DIGESTS_DIR,
-  resolveSessionVault,
+  resolveSessionTarget,
   SESSIONS_DIR,
-  workspaceSlug,
 } from "./session-pages.js";
 import { runSubAgent } from "./subagent.js";
 import type { TaskConfig } from "./task-config.js";
@@ -522,18 +521,21 @@ export function registerWikiDigest(pi: ExtensionAPI, runtime: Runtime): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const paths = resolveSessionVault(ctx.cwd ?? process.cwd());
-      if (!paths) {
+      runtime.ensureConfig(ctx.cwd ?? process.cwd());
+      const target = resolveSessionTarget(ctx.cwd ?? process.cwd(), runtime.config);
+      if (!target) {
         return {
           content: [
-            { type: "text", text: "No project wiki vault here — digests are project-only." },
+            {
+              type: "text",
+              text: "No project wiki vault here (and sessionPages.personalFallback is off or the personal vault is missing).",
+            },
           ],
           details: {} as Record<string, unknown>,
           isError: true,
         };
       }
-      runtime.ensureConfig(ctx.cwd ?? paths.root);
-      const workspace = workspaceSlug(paths, runtime.config);
+      const { paths, workspace } = target;
       if (params.dry_run) {
         const r = await runDigest(paths, workspace, { dryRun: true, force: params.force });
         return {
@@ -585,9 +587,9 @@ export function maybeAutoDigest(
   cwd: string,
   config: TaskConfig,
 ): void {
-  const paths = resolveSessionVault(cwd);
-  if (!paths) return;
-  const workspace = workspaceSlug(paths, config);
+  const target = resolveSessionTarget(cwd, config);
+  if (!target) return;
+  const { paths, workspace } = target;
   if (runtime.isInFlight(`digest:${paths.root}:${workspace}`)) return;
   let plan: DigestPlan;
   try {

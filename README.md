@@ -131,6 +131,9 @@ there are at least 5 new sessions and at least 24 h have passed since the last
 build (`force` skips both checks). It also takes a lock and supports `dry_run`.
 Compaction then cold-demotes the consumed raw pages, changing frontmatter only.
 Under oh-my-pi the 2 s shutdown cap means pages are usually the fallback kind.
+Pages go to the project vault only, unless you also set
+`sessionPages.personalFallback: true`. With that on, repos without a `.llm-wiki/`
+use the personal vault instead, with one workspace per git repo.
 The design is in [DESIGN-session-memory.md](./DESIGN-session-memory.md).
 
 ## Local semantic recall

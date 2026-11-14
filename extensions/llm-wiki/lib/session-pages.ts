@@ -1,14 +1,26 @@
 import { createHash, randomUUID } from "node:crypto";
-import { linkSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, linkSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { detectHost } from "./host.js";
 import { createKnowledgeDocument, serializeKnowledgeDocument } from "./knowledge-document.js";
 import { appendEvent, rebuildMetadataLight } from "./metadata.js";
 import { raceWithTimeout } from "./subagent.js";
-import { loadTaskConfig, sessionPagesEnabled, type TaskConfig } from "./task-config.js";
-import { getVaultPaths, resolveProjectVaultRoot, slugify, type VaultPaths } from "./utils.js";
+import {
+  loadTaskConfig,
+  sessionPagesEnabled,
+  sessionPersonalFallbackEnabled,
+  type TaskConfig,
+} from "./task-config.js";
+import {
+  getPersonalWikiPaths,
+  getVaultPaths,
+  isPersonalVault,
+  resolveProjectVaultRoot,
+  slugify,
+  type VaultPaths,
+} from "./utils.js";
 import { assertWritableVault, inspectWritableVault } from "./vault-format.js";
 
 /**
@@ -86,6 +98,33 @@ export function isSessionPage(id: string, type: unknown): boolean {
  */
 export function workspaceSlug(paths: VaultPaths, config?: TaskConfig): string {
   return slugify(config?.projectId ?? basename(paths.root)) || "workspace";
+}
+
+/**
+ * Repo slug for the personal-vault fallback (§8.1-10): slugified basename of
+ * the git toplevel — nearest ancestor holding `.git` (dir, or file for
+ * worktrees/submodules) — else of cwd. Never basename(home): that collapses
+ * every repo into one workspace. Pure filesystem walk, no git subprocess.
+ */
+export function repoSlug(cwd: string): string {
+  let dir = cwd;
+  for (;;) {
+    if (existsSync(join(dir, ".git"))) return slugify(basename(dir)) || "workspace";
+    const parent = dirname(dir);
+    if (parent === dir) return slugify(basename(cwd)) || "workspace";
+    dir = parent;
+  }
+}
+
+/**
+ * Ambient-recall project id. Flag-off (or a project vault) returns the
+ * pre-feature expression byte-for-byte; only with the personal fallback on and
+ * the personal vault as primary does it switch to the repo slug, so the
+ * writer's `scope: project:<slug>` and the ambient filter agree.
+ */
+export function ambientScopeId(paths: VaultPaths, cwd: string, config?: TaskConfig): string {
+  if (sessionPersonalFallbackEnabled(config) && isPersonalVault(paths)) return repoSlug(cwd);
+  return config?.projectId ?? slugify(basename(paths.root));
 }
 
 /**
@@ -206,10 +245,28 @@ export function writeSessionPage(paths: VaultPaths, input: SessionPageInput): Se
   }
 }
 
-/** Project vault for session material; null when only the personal fallback applies (§8.1-8). */
-export function resolveSessionVault(cwd: string): VaultPaths | null {
+export interface SessionTarget {
+  paths: VaultPaths;
+  workspace: string;
+}
+
+/**
+ * Where this cwd's session material goes. A real project vault always wins
+ * (unchanged slug). Otherwise — including WIKI_HOME, which
+ * resolveProjectVaultRoot reports as a "project" root but IS the personal
+ * vault — only the explicit personal fallback applies, keyed by repo slug, and
+ * only when the personal vault is already initialized (never bootstrapped here).
+ */
+export function resolveSessionTarget(cwd: string, config?: TaskConfig): SessionTarget | null {
   const root = resolveProjectVaultRoot(cwd);
-  return root ? getVaultPaths(root) : null;
+  if (root) {
+    const paths = getVaultPaths(root);
+    if (!isPersonalVault(paths)) return { paths, workspace: workspaceSlug(paths, config) };
+  }
+  if (!sessionPersonalFallbackEnabled(config)) return null;
+  const personal = getPersonalWikiPaths();
+  if (!existsSync(join(personal.dotWiki, "config.json"))) return null;
+  return { paths: personal, workspace: repoSlug(cwd) };
 }
 
 /**
@@ -234,17 +291,21 @@ export function registerWikiSessionCapture(pi: ExtensionAPI, getConfig: () => Ta
       session_id: Type.Optional(Type.String({ description: "Session id (default: timestamp)" })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const paths = resolveSessionVault(ctx.cwd ?? process.cwd());
+      const target = resolveSessionTarget(ctx.cwd ?? process.cwd(), getConfig());
       const fail = (text: string) => ({
         content: [{ type: "text" as const, text }],
         details: {} as Record<string, unknown>,
         isError: true,
       });
-      if (!paths) return fail("No project wiki vault here — session pages are project-only.");
+      if (!target) {
+        return fail(
+          "No project wiki vault here (and sessionPages.personalFallback is off or the personal vault is missing).",
+        );
+      }
       const claims = parseClaims(params.claims);
       if (claims.length === 0) return fail("No `## <kind>: <claim>` sections found.");
-      const result = writeSessionPage(paths, {
-        workspace: workspaceSlug(paths, getConfig()),
+      const result = writeSessionPage(target.paths, {
+        workspace: target.workspace,
         sessionId: params.session_id ?? `manual-${Date.now().toString(36)}`,
         claims,
         summaryQuality: "manual",
@@ -463,15 +524,15 @@ export function registerSessionShutdown(
     try {
       const config = loadTaskConfig(ctx.cwd);
       if (!sessionPagesEnabled(config)) return;
-      const paths = resolveSessionVault(ctx.cwd);
-      if (!paths || !inspectWritableVault(paths).ok) return;
+      const target = resolveSessionTarget(ctx.cwd, config);
+      if (!target || !inspectWritableVault(target.paths).ok) return;
       const budgetMs =
         detectHost() === "omp"
           ? OMP_SUMMARY_BUDGET_MS
           : (config.sessionPages?.summaryTimeoutSec ?? 120) * 1000;
       await captureSession({
-        paths,
-        workspace: workspaceSlug(paths, config),
+        paths: target.paths,
+        workspace: target.workspace,
         sessionId: ctx.sessionManager.getSessionId(),
         created: ctx.sessionManager.getHeader()?.timestamp,
         branch: ctx.sessionManager.getBranch() as BranchEntry[],
