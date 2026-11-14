@@ -14,6 +14,7 @@ import {
   writeSessionPage,
 } from "../extensions/llm-wiki/lib/session-pages.js";
 import {
+  loadTaskConfig,
   sessionPersonalFallbackEnabled,
   type TaskConfig,
 } from "../extensions/llm-wiki/lib/task-config.js";
@@ -31,6 +32,8 @@ let repo: string;
 let sub: string;
 const originalCwd = process.cwd();
 const originalWikiHome = process.env.WIKI_HOME;
+const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+const REPO_KEY = /^my-repo-[0-9a-f]{6}$/;
 
 const ON: TaskConfig = { sessionPages: { enabled: true, personalFallback: true } };
 const PAGES_ONLY: TaskConfig = { sessionPages: { enabled: true } };
@@ -52,12 +55,15 @@ beforeEach(() => {
   mkdirSync(sub, { recursive: true });
   mkdirSync(home, { recursive: true });
   process.env.WIKI_HOME = home;
+  // Per-test user-level settings dir (personalFallback is user-level only).
+  process.env.PI_CODING_AGENT_DIR = join(base, "agent");
 });
 
 afterEach(() => {
   process.chdir(originalCwd);
   if (originalWikiHome === undefined) delete process.env.WIKI_HOME;
   else process.env.WIKI_HOME = originalWikiHome;
+  process.env.PI_CODING_AGENT_DIR = originalAgentDir;
   rmSync(base, { recursive: true, force: true });
 });
 
@@ -79,17 +85,26 @@ describe("personal fallback flag", () => {
 
 describe("repo slug", () => {
   it("uses the git toplevel from a subdirectory, else the cwd basename", () => {
-    expect(repoSlug(sub)).toBe("my-repo");
+    expect(repoSlug(sub)).toMatch(REPO_KEY);
+    expect(repoSlug(sub)).toBe(repoSlug(repo));
     const loose = join(base, "Loose Dir");
     mkdirSync(loose);
-    expect(repoSlug(loose)).toBe("loose-dir");
+    expect(repoSlug(loose)).toMatch(/^loose-dir-[0-9a-f]{6}$/);
+  });
+
+  it("two repos with the same basename get different keys", () => {
+    const twin = join(base, "elsewhere", "My Repo");
+    mkdirSync(join(twin, ".git"), { recursive: true });
+    expect(repoSlug(twin)).toMatch(REPO_KEY);
+    expect(repoSlug(twin)).not.toBe(repoSlug(repo));
   });
 
   it("a worktree-style .git FILE also marks the toplevel", () => {
     const wt = join(base, "wt-checkout");
     mkdirSync(join(wt, "a"), { recursive: true });
     writeFileSync(join(wt, ".git"), "gitdir: /elsewhere\n");
-    expect(repoSlug(join(wt, "a"))).toBe("wt-checkout");
+    expect(repoSlug(join(wt, "a"))).toBe(repoSlug(wt));
+    expect(repoSlug(wt)).toMatch(/^wt-checkout-[0-9a-f]{6}$/);
   });
 });
 
@@ -98,7 +113,8 @@ describe("resolveSessionTarget", () => {
     const personal = initVault(home);
     const t = resolveSessionTarget(sub, ON);
     expect(t?.paths.root).toBe(personal.root);
-    expect(t?.workspace).toBe("my-repo");
+    expect(t?.workspace).toBe(repoSlug(sub));
+    expect(t?.workspace).toMatch(REPO_KEY);
   });
 
   it("on: a missing personal vault is never bootstrapped", () => {
@@ -122,7 +138,7 @@ describe("ambient scope with the personal vault as primary", () => {
     expect(ambientScopeId(personal, sub, undefined)).toBe("home");
     expect(ambientScopeId(personal, sub, PAGES_ONLY)).toBe("home");
     expect(ambientScopeId(personal, sub, { projectId: "Pinned" })).toBe("Pinned");
-    expect(ambientScopeId(personal, sub, ON)).toBe("my-repo");
+    expect(ambientScopeId(personal, sub, ON)).toBe(repoSlug(sub));
     const project = initVault(repo);
     expect(ambientScopeId(project, repo, ON)).toBe("my-repo");
   });
@@ -136,7 +152,8 @@ describe("ambient scope with the personal vault as primary", () => {
       claims: parseClaims("## decision: frobnicator uses the quux loop"),
     });
     mkdirSync(join(personal.wiki, "digests"), { recursive: true });
-    for (const ws of ["my-repo", "other-repo"]) {
+    const mine = repoSlug(sub);
+    for (const ws of [mine, "my-repo-000000"]) {
       writeFileSync(
         join(personal.wiki, "digests", `${ws}.md`),
         `---\ntype: digest\ntitle: frobnicator quux loop ${ws}\nscope: project:${ws}\n---\n\n## Decisions\n\n- 2026-11-14: frobnicator uses the quux loop\n`,
@@ -146,8 +163,8 @@ describe("ambient scope with the personal vault as primary", () => {
     const ids = searchWiki(personal, "frobnicator quux loop", 3, 5, undefined, {
       projectId: ambientScopeId(personal, sub, ON),
     }).map((r) => r.id);
-    expect(ids).toContain("digests/my-repo");
-    expect(ids).not.toContain("digests/other-repo");
+    expect(ids).toContain(`digests/${mine}`);
+    expect(ids).not.toContain("digests/my-repo-000000");
     expect(ids).not.toContain(page.id);
   });
 });
@@ -182,21 +199,30 @@ describe("exit hook end to end", () => {
     };
   }
 
-  function settings(sp: Record<string, boolean>) {
-    mkdirSync(join(sub, ".pi"), { recursive: true });
-    writeFileSync(
-      join(sub, ".pi", "settings.json"),
-      JSON.stringify({ "llm-wiki": { sessionPages: sp } }),
-    );
+  function settings(sp: Record<string, boolean>, where: "project" | "user" = "project") {
+    const dir = where === "project" ? join(sub, ".pi") : join(base, "agent");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ "llm-wiki": { sessionPages: sp } }));
   }
 
   const sessionsDir = (p: VaultPaths) => join(p.wiki, "sessions");
 
   it("fallback on: the page lands in the personal vault under the repo slug", async () => {
     const personal = initVault(home);
-    settings({ enabled: true, personalFallback: true });
+    settings({ personalFallback: true }, "user");
+    settings({ enabled: true });
     await shutdownIn(sub)();
-    expect(readdirSync(join(sessionsDir(personal), "my-repo"))).toEqual(["2026-11-14-personal.md"]);
+    expect(readdirSync(join(sessionsDir(personal), repoSlug(sub)))).toEqual([
+      "2026-11-14-personal.md",
+    ]);
+  });
+
+  it("a repo's own settings cannot opt the user into personal-vault writes", async () => {
+    const personal = initVault(home);
+    settings({ enabled: true, personalFallback: true });
+    expect(loadTaskConfig(sub).sessionPages).toEqual({ enabled: true });
+    await shutdownIn(sub)();
+    expect(existsSync(sessionsDir(personal))).toBe(false);
   });
 
   it("fallback off: no page anywhere", async () => {

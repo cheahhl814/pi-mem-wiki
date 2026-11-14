@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -101,19 +101,31 @@ export function workspaceSlug(paths: VaultPaths, config?: TaskConfig): string {
 }
 
 /**
- * Repo slug for the personal-vault fallback (§8.1-10): slugified basename of
- * the git toplevel — nearest ancestor holding `.git` (dir, or file for
- * worktrees/submodules) — else of cwd. Never basename(home): that collapses
- * every repo into one workspace. Pure filesystem walk, no git subprocess.
+ * Repo key for the personal-vault fallback (§8.1-10): readable slug of the git
+ * toplevel — nearest ancestor holding `.git` (dir, or file for
+ * worktrees/submodules) — else of cwd, plus a 6-hex hash of that directory's
+ * realpath so two repos sharing a basename never share a workspace/digest.
+ * Never basename(home). Pure filesystem walk, no git subprocess.
  */
 export function repoSlug(cwd: string): string {
   let dir = cwd;
   for (;;) {
-    if (existsSync(join(dir, ".git"))) return slugify(basename(dir)) || "workspace";
+    if (existsSync(join(dir, ".git"))) break;
     const parent = dirname(dir);
-    if (parent === dir) return slugify(basename(cwd)) || "workspace";
+    if (parent === dir) {
+      dir = cwd;
+      break;
+    }
     dir = parent;
   }
+  let real = dir;
+  try {
+    real = realpathSync(dir);
+  } catch {
+    // keep the lexical path
+  }
+  const hash = createHash("sha256").update(real).digest("hex").slice(0, 6);
+  return `${slugify(basename(dir)) || "workspace"}-${hash}`;
 }
 
 /**

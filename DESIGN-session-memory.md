@@ -218,14 +218,18 @@ pin down areas where the original text was unsound or under-specified.
     `.llm-wiki/`, so a second flag, `sessionPages.personalFallback` (default OFF,
     effective only together with `enabled`), lets session pages and digests go to
     the **initialized** personal vault when no project vault exists. The personal
-    vault is never bootstrapped for this.
+    vault is never bootstrapped for this. `personalFallback` is honoured **only
+    from user-level settings**: a cloned repo's `.pi`/`.omp` project settings
+    cannot opt the user into writes to their personal vault. Project-level
+    `enabled` still toggles capture once the user has opted in.
     - **Precedence:** a real project vault always wins, with its unchanged slug.
       `WIKI_HOME` counts as the personal vault, not as a project, even though
       `resolveProjectVaultRoot` reports it as a root. Without the fallback it gets no pages.
-    - **Workspace slug:** `slugify(basename(git toplevel))` — the nearest ancestor
-      holding `.git` (a directory, or a file for worktrees and submodules) — else the
-      cwd basename. It is never `basename(home)`, which would collapse every repo into
-      one workspace and one digest. `llm-wiki.projectId` is deliberately ignored here:
+    - **Workspace slug:** `<slugify(basename(git toplevel))>-<6 hex of
+      sha256(realpath(toplevel))>`. The toplevel is the nearest ancestor holding
+      `.git` (a directory, or a file for worktrees and submodules), else the cwd. It is
+      never `basename(home)`, which would collapse every repo into one workspace and
+      one digest. The hash keeps same-named repos apart. `llm-wiki.projectId` is deliberately ignored here:
       set globally, it would recreate exactly that collapse.
     - **Scope consistency:** when the fallback is on and the personal vault is the
       ambient primary, the ambient `scopeFilter.projectId` is the same repo slug the
@@ -244,5 +248,6 @@ pin down areas where the original text was unsound or under-specified.
         `WIKI_HOME`/`WIKI_ROOT` with MCP or other harnesses exposes
         transcript-derived text to them. Secret redaction runs before freeze, but it
         matches patterns and does not understand what it reads.
-      - *Slug collisions:* two repos with the same toplevel basename share a
-        workspace (and therefore a digest).
+      - *Repo moves:* the key hashes the toplevel realpath, so moving or
+        re-cloning a repo starts a new workspace (the old digest stays recallable).
+        A 6-hex hash makes accidental collisions unlikely, not impossible.

@@ -133,7 +133,8 @@ Compaction then cold-demotes the consumed raw pages, changing frontmatter only.
 Under oh-my-pi the 2 s shutdown cap means pages are usually the fallback kind.
 Pages go to the project vault only, unless you also set
 `sessionPages.personalFallback: true`. With that on, repos without a `.llm-wiki/`
-use the personal vault instead, with one workspace per git repo.
+use the personal vault instead, with one workspace per git repo. This setting
+is read only from your user-level settings, so a repo's own settings can't turn it on.
 The design is in [DESIGN-session-memory.md](./DESIGN-session-memory.md).
 
 ## Local semantic recall

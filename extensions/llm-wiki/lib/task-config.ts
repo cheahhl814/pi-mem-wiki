@@ -573,8 +573,17 @@ export function loadTaskConfig(cwd: string): TaskConfig {
   for (const path of listGlobalSettingsFiles()) {
     Object.assign(config, readNamespacedConfig(path));
   }
+  // Security: sessionPages.personalFallback writes into the USER'S personal
+  // vault, so a cloned repo's project settings must not be able to opt the
+  // user in. Only the user-level value counts (DESIGN §8.1-10).
+  const userFallback = config.sessionPages?.personalFallback;
   for (const path of listProjectSettingsFiles(cwd)) {
     Object.assign(config, readNamespacedConfig(path));
+  }
+  if (config.sessionPages) {
+    const { personalFallback: _projectValue, ...rest } = config.sessionPages;
+    config.sessionPages =
+      userFallback === undefined ? rest : { ...rest, personalFallback: userFallback };
   }
   return config;
 }
