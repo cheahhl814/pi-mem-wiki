@@ -123,7 +123,10 @@ export default function (pi: ExtensionAPI) {
   registerWikiReindexEmbeddings(pi, runtime);
   registerWikiLogEvent(pi);
   registerWikiWatch(pi);
-  registerWikiRecall(pi, runtime);
+  // Session memory pages (DESIGN-session-memory.md): OPT-IN, default OFF.
+  // Same factory-time gate as trajectories — flag off registers nothing.
+  const sessionPagesOn = sessionPagesEnabled(loadTaskConfig(process.cwd()));
+  registerWikiRecall(pi, runtime, { includeRawParam: sessionPagesOn });
   registerWikiRetro(pi, runtime);
   // Agent working-memory (issue #80): capture what the agent *did* (its
   // tool-call trajectory), distill it into reusable skills, and recall past
@@ -142,9 +145,6 @@ export default function (pi: ExtensionAPI) {
   }
   // Activation surface for the above (always available so users can turn it on).
   registerWikiTrajectoriesCommand(pi);
-  // Session memory pages (DESIGN-session-memory.md): OPT-IN, default OFF.
-  // Same factory-time gate as trajectories — flag off registers nothing.
-  const sessionPagesOn = sessionPagesEnabled(loadTaskConfig(process.cwd()));
   if (sessionPagesOn) {
     registerWikiSessionCapture(pi, () => runtime.config);
   }

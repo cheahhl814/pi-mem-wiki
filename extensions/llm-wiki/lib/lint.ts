@@ -9,6 +9,7 @@ import {
 import { repairLegacyKnowledgeDocuments } from "./legacy-repair.js";
 import { appendEvent, rebuildMetadata, rebuildMetadataLight } from "./metadata.js";
 import { readQmdIndexStatus } from "./qmd-indexing.js";
+import { isSessionPage, lintSessionMemoryPage } from "./session-pages.js";
 import { fmtDate, slugify, type VaultPaths, writeJson } from "./utils.js";
 import {
   assertWritableVault,
@@ -132,8 +133,14 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
   }
 
   let orphans = 0;
+  // pi-mem-wiki fork (session memory §8.1-7): immutability / cap findings.
+  let sessionMemoryIssues = 0;
   for (const page of pages) {
-    if (inbound[page.id] === 0) {
+    const sm = lintSessionMemoryPage(page);
+    sessionMemoryIssues += sm.length;
+    findings.push(...sm);
+    // Raw session pages are archives by design — never orphan findings.
+    if (inbound[page.id] === 0 && !isSessionPage(page.id, page.frontmatter.type)) {
       orphans++;
       findings.push(`Orphan: ${page.id} has no inbound links`);
     }
@@ -201,6 +208,7 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
     sourcePacketLinks > 0
       ? `- Source-packet links (informational): ${sourcePacketLinks}`
       : "",
+    sessionMemoryIssues > 0 ? `- Session/digest issues: ${sessionMemoryIssues}` : "",
     autoFix ? `- Missing-page fixes applied: ${fixesApplied}` : "",
     repair?.repaired ? `- Legacy pages repaired: ${repair.repaired}` : "",
     repair?.manifestPath ? `- Repair manifest: ${repair.manifestPath}` : "",
@@ -266,6 +274,7 @@ export async function runWikiLint(paths: VaultPaths, autoFix: boolean): Promise<
       : "",
     tagLikeLinks > 0 ? `- Tag-like links (informational): ${tagLikeLinks}` : "",
     sourcePacketLinks > 0 ? `- Source-packet links (informational): ${sourcePacketLinks}` : "",
+    sessionMemoryIssues > 0 ? `- Session/digest issues: ${sessionMemoryIssues}` : "",
     autoFix ? `- Missing-page fixes: ${fixesApplied}` : "",
     repair?.repaired ? `- Legacy pages repaired: ${repair.repaired}` : "",
     "",

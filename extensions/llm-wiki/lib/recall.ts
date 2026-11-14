@@ -13,6 +13,7 @@ import {
 import { parseKnowledgeDocument } from "./knowledge-document.js";
 import type { Registry } from "./metadata.js";
 import type { Runtime } from "./runtime.js";
+import { isSessionPage } from "./session-pages.js";
 import type { TaskConfig } from "./task-config.js";
 import {
   getPersonalWikiPaths,
@@ -635,7 +636,7 @@ export function searchWiki(
   /** pi-mem-wiki fork (fix 2): project scoping — pages scoped `project:<x>` are
    * skipped unless x matches; `global` and unscoped pages always match. */
   /** pi-mem-wiki fork (v2-a): includeCold — do NOT decay archived/cold pages. */
-  scopeFilter?: { projectId?: string; includeCold?: boolean },
+  scopeFilter?: { projectId?: string; includeCold?: boolean; includeRaw?: boolean },
 ): RecallResult[] {
   const registry = readJson<Registry>(join(paths.meta, "registry.json"), {
     version: "1.0",
@@ -655,6 +656,9 @@ export function searchWiki(
   const scored: Scored[] = [];
 
   for (const [id, entry] of Object.entries(registry.pages)) {
+    // pi-mem-wiki fork (session memory §2.3): raw session pages are archives,
+    // not recall citizens — skipped unless explicitly requested (include_raw).
+    if (!scopeFilter?.includeRaw && isSessionPage(id, entry.type)) continue;
     const pagePath = join(paths.wiki, `${id}.md`);
     const pageExists = existsSync(pagePath);
     const parsed = parsePage(pagePath, id);
@@ -909,7 +913,7 @@ export function searchWikiLayered(
   includePersonal = true,
   semantic?: SemanticContext,
   /** pi-mem-wiki fork (fix 2): see searchWiki. */
-  scopeFilter?: { projectId?: string; includeCold?: boolean },
+  scopeFilter?: { projectId?: string; includeCold?: boolean; includeRaw?: boolean },
 ): RecallResult[] {
   // Search primary vault
   const primaryResults = searchWiki(primaryPaths, query, maxResults, minScore, semantic, scopeFilter);
@@ -926,7 +930,7 @@ export function searchWikiLayered(
     const personalPaths = getPersonalWikiPaths();
     if (existsSync(join(personalPaths.dotWiki, "config.json"))) {
       const personalFilter = scopeFilter
-        ? { includeCold: scopeFilter.includeCold }
+        ? { includeCold: scopeFilter.includeCold, includeRaw: scopeFilter.includeRaw }
         : undefined;
       personalResults = searchWiki(
         personalPaths,
@@ -1058,7 +1062,7 @@ export async function searchWikiHybrid(
     config?: TaskConfig;
     embedder?: Embedder;
     /** pi-mem-wiki fork (fix 2): see searchWiki. */
-    scopeFilter?: { projectId?: string; includeCold?: boolean };
+    scopeFilter?: { projectId?: string; includeCold?: boolean; includeRaw?: boolean };
   } = {},
 ): Promise<RecallResult[]> {
   // Pure-lexical fast path: no semantic signal anywhere => no embedding call.
@@ -1328,7 +1332,23 @@ export function formatRecallContext(
  * The model can call this explicitly to search the wiki.
  * It is also called automatically via before_agent_start hook.
  */
-export function registerWikiRecall(pi: ExtensionAPI, runtime?: Runtime): void {
+export function registerWikiRecall(
+  pi: ExtensionAPI,
+  runtime?: Runtime,
+  /** pi-mem-wiki fork (session memory): expose `include_raw` only when session pages are on. */
+  opts?: { includeRawParam?: boolean },
+): void {
+  // Flag off ⇒ the tool schema is byte-identical to the pre-feature one.
+  const includeRawParam = (opts?.includeRawParam
+    ? {
+        include_raw: Type.Optional(
+          Type.Boolean({
+            description:
+              "pi-mem-wiki fork: also search raw session pages (excluded by default; the digest is the recall citizen).",
+          }),
+        ),
+      }
+    : {}) as Record<never, never>; // typed out of params: read via cast below
   pi.registerTool({
     name: "wiki_recall",
     label: "Wiki Recall",
@@ -1355,6 +1375,7 @@ export function registerWikiRecall(pi: ExtensionAPI, runtime?: Runtime): void {
             "pi-mem-wiki fork: include archived/cold pages despite the default lifecycle decay (recall escape hatch),",
         }),
       ),
+      ...includeRawParam,
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const paths = resolveVaultPaths(ctx.cwd ?? process.cwd());
@@ -1383,7 +1404,10 @@ export function registerWikiRecall(pi: ExtensionAPI, runtime?: Runtime): void {
       if (runtime) runtime.ensureConfig(ctx.cwd ?? paths.root);
       const results = await searchWikiHybrid(paths, params.query, maxResults, 0, true, {
         config: runtime?.config,
-        scopeFilter: { includeCold: params.include_cold === true },
+        scopeFilter: {
+          includeCold: params.include_cold === true,
+          includeRaw: (params as { include_raw?: boolean }).include_raw === true,
+        },
       });
 
       if (results.length === 0) {

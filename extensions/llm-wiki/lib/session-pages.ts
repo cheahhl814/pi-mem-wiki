@@ -29,6 +29,50 @@ export interface Claim {
 /** Folder (under wiki/) holding raw session pages. */
 export const SESSIONS_DIR = "sessions";
 
+/** Folder (under wiki/) holding derived per-workspace digests (§2.2). */
+export const DIGESTS_DIR = "digests";
+/** Digest hard cap (§2.2): ~200 lines / ~25 KB. */
+export const DIGEST_MAX_LINES = 200;
+export const DIGEST_MAX_BYTES = 25 * 1024;
+
+export function isDigestPage(id: string, type: unknown): boolean {
+  return type === "digest" && id.startsWith(`${DIGESTS_DIR}/`);
+}
+
+/**
+ * Lint findings for session/digest pages (§8.1-7). Returns [] for any other
+ * page, so vaults without the feature see no change.
+ */
+export function lintSessionMemoryPage(page: {
+  id: string;
+  body: string;
+  frontmatter: { type?: unknown; lifecycle?: unknown };
+  extensions: Record<string, unknown>;
+}): string[] {
+  const findings: string[] = [];
+  if (isSessionPage(page.id, page.frontmatter.type)) {
+    const frozen = page.extensions.body_sha256;
+    if (typeof frozen !== "string" || frozen !== sessionBodyHash(page.body)) {
+      findings.push(`Session page modified after close: ${page.id} (body_sha256 mismatch)`);
+    }
+    const lc = page.frontmatter.lifecycle;
+    if (lc !== "raw" && lc !== "cold") {
+      findings.push(
+        `Session page has illegal lifecycle: ${page.id} (${String(lc)}; raw|cold only)`,
+      );
+    }
+  } else if (isDigestPage(page.id, page.frontmatter.type)) {
+    const lines = page.body.split("\n").length;
+    const bytes = Buffer.byteLength(page.body, "utf8");
+    if (lines > DIGEST_MAX_LINES || bytes > DIGEST_MAX_BYTES) {
+      findings.push(
+        `Digest over cap: ${page.id} (${lines} lines, ${bytes} bytes; cap ${DIGEST_MAX_LINES} lines / ${DIGEST_MAX_BYTES} bytes)`,
+      );
+    }
+  }
+  return findings;
+}
+
 /** Is this registry id / page a raw session page? Keys on type AND folder (§8.1-6). */
 export function isSessionPage(id: string, type: unknown): boolean {
   return type === "session" && id.startsWith(`${SESSIONS_DIR}/`);
