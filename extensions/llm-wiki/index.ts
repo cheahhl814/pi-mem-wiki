@@ -24,6 +24,7 @@ import {
 } from "./lib/recall.js";
 import { registerWikiRetro } from "./lib/retro.js";
 import { registerBackgroundRuntime } from "./lib/runtime.js";
+import { registerWikiSessionCapture } from "./lib/session-pages.js";
 import { registerWikiSettingsCommand } from "./lib/settings-command.js";
 import { slugify } from "./lib/utils.js";
 import {
@@ -31,6 +32,7 @@ import {
   loadTaskConfig,
   noticesEnabled,
   personalVaultIsAmbient,
+  sessionPagesEnabled,
   trajectoriesEnabled,
 } from "./lib/task-config.js";
 import {
@@ -140,6 +142,12 @@ export default function (pi: ExtensionAPI) {
   }
   // Activation surface for the above (always available so users can turn it on).
   registerWikiTrajectoriesCommand(pi);
+  // Session memory pages (DESIGN-session-memory.md): OPT-IN, default OFF.
+  // Same factory-time gate as trajectories — flag off registers nothing.
+  const sessionPagesOn = sessionPagesEnabled(loadTaskConfig(process.cwd()));
+  if (sessionPagesOn) {
+    registerWikiSessionCapture(pi, () => runtime.config);
+  }
   // Model selection surface (issue #69): /wiki-model command to view/set the
   // background task model. The taskModel config field + resolveModel already
   // exist; this exposes them to the user (default stays the session model).

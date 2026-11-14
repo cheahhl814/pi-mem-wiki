@@ -209,6 +209,15 @@ export interface TaskConfig {
    * Custom types use a generic page template (no per-type templates).
    */
   customTypes?: Record<string, string>;
+
+  /**
+   * pi-mem-wiki fork (session memory, DESIGN-session-memory.md): per-session
+   * raw pages + gated digest. OPT-IN, default OFF — only an explicit
+   * `sessionPages.enabled: true` registers the tools and the exit hook.
+   * `summaryTimeoutSec` bounds the exit summarizer under pi (default 120);
+   * omp's 2 s shutdown cap always wins there.
+   */
+  sessionPages?: { enabled?: boolean; summaryTimeoutSec?: number };
 }
 
 export const TASK_DEFAULTS: TaskConfig = {};
@@ -269,6 +278,11 @@ export function personalVaultIsAmbient(
  */
 export function trajectoriesEnabled(config: TaskConfig | undefined): boolean {
   return config?.trajectories === true;
+}
+
+/** Session memory pages (DESIGN-session-memory.md): default OFF, explicit `true` only. */
+export function sessionPagesEnabled(config: TaskConfig | undefined): boolean {
+  return config?.sessionPages?.enabled === true;
 }
 
 const SETTINGS_KEY = "llm-wiki";
@@ -367,6 +381,17 @@ function readNamespacedConfig(path: string): Partial<TaskConfig> {
     const wl = section.wikilinkValidation;
     if (typeof wl === "string" && (WIKILINK_VALIDATION_MODES as readonly string[]).includes(wl)) {
       out.wikilinkValidation = wl as WikilinkValidationMode;
+    }
+
+    const sp = section.sessionPages;
+    if (sp && typeof sp === "object" && !Array.isArray(sp)) {
+      const v = sp as Record<string, unknown>;
+      const spOut: { enabled?: boolean; summaryTimeoutSec?: number } = {};
+      if (typeof v.enabled === "boolean") spOut.enabled = v.enabled;
+      if (typeof v.summaryTimeoutSec === "number" && v.summaryTimeoutSec > 0) {
+        spOut.summaryTimeoutSec = v.summaryTimeoutSec;
+      }
+      out.sessionPages = spOut;
     }
 
     const ct = section.customTypes;
