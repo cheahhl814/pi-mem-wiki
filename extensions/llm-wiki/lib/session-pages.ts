@@ -1,13 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { linkSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { detectHost } from "./host.js";
 import { createKnowledgeDocument, serializeKnowledgeDocument } from "./knowledge-document.js";
 import { appendEvent, rebuildMetadataLight } from "./metadata.js";
-import type { TaskConfig } from "./task-config.js";
+import { raceWithTimeout } from "./subagent.js";
+import { loadTaskConfig, sessionPagesEnabled, type TaskConfig } from "./task-config.js";
 import { getVaultPaths, resolveProjectVaultRoot, slugify, type VaultPaths } from "./utils.js";
-import { assertWritableVault } from "./vault-format.js";
+import { assertWritableVault, inspectWritableVault } from "./vault-format.js";
 
 /**
  * pi-mem-wiki fork: immutable per-session raw pages (DESIGN-session-memory.md §2.1).
@@ -253,5 +255,193 @@ export function registerWikiSessionCapture(pi: ExtensionAPI, getConfig: () => Ta
         details: { id: result.id, claims: claims.length } as Record<string, unknown>,
       };
     },
+  });
+}
+
+// ─── Exit hook (slice 4, §3) ─────────────────────────────
+
+/** Text-in/text-out model call (same shape as session-digest's `Complete`). */
+type CompleteFn = (systemPrompt: string, userPrompt: string) => Promise<string>;
+
+/** Bounded transcript tail fed to the summarizer (§3 step 2). */
+export const TRANSCRIPT_MAX_CHARS = 40_000;
+/** omp hard-caps session_shutdown handlers at 2000 ms (runtime.ts, #263). */
+export const OMP_SUMMARY_BUDGET_MS = 1_500;
+
+interface BranchEntry {
+  type?: string;
+  summary?: unknown;
+  message?: { role?: string; content?: unknown };
+}
+
+function textOf(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((p) => p && p.type === "text" && typeof p.text === "string")
+    .map((p) => p.text as string)
+    .join("\n")
+    .trim();
+}
+
+/** User/assistant text + compaction summaries, newest kept when over budget. */
+export function branchToTranscript(branch: BranchEntry[], maxChars = TRANSCRIPT_MAX_CHARS): string {
+  const chunks: string[] = [];
+  for (const e of branch) {
+    if (e?.type === "compaction" && typeof e.summary === "string") {
+      chunks.push(`## Compaction summary\n\n${e.summary}`);
+    } else if (
+      e?.type === "message" &&
+      (e.message?.role === "user" || e.message?.role === "assistant")
+    ) {
+      const text = textOf(e.message.content);
+      if (text) chunks.push(`## ${e.message.role === "user" ? "User" : "Assistant"}\n\n${text}`);
+    }
+  }
+  const all = chunks.join("\n\n");
+  return all.length > maxChars ? all.slice(all.length - maxChars) : all;
+}
+
+/** File-ish tool-call arguments (path/file keys), deduped, capped. */
+export function touchedFiles(branch: BranchEntry[], cap = 50): string[] {
+  const files = new Set<string>();
+  for (const e of branch) {
+    const content =
+      e?.type === "message" && e.message?.role === "assistant" ? e.message.content : null;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (part?.type !== "toolCall" || !part.arguments || typeof part.arguments !== "object")
+        continue;
+      for (const [key, value] of Object.entries(part.arguments as Record<string, unknown>)) {
+        if (/path|file/i.test(key) && typeof value === "string" && value.length < 400)
+          files.add(value);
+      }
+    }
+  }
+  return [...files].slice(0, cap);
+}
+
+/**
+ * Deterministic fallback (§3 step 3): file list + user messages only, in the
+ * claim grammar so the page stays homogeneous. Never needs a model.
+ */
+export function fallbackClaims(branch: BranchEntry[]): Claim[] {
+  const asks = branch
+    .filter((e) => e?.type === "message" && e.message?.role === "user")
+    .map((e) => textOf(e.message?.content).split("\n")[0].slice(0, 200))
+    .filter(Boolean)
+    .slice(-20);
+  const files = touchedFiles(branch);
+  const claims: Claim[] = [];
+  if (asks.length) {
+    claims.push({
+      kind: "note",
+      heading: "user requests this session (fallback summary)",
+      body: asks.map((a) => `- ${a}`).join("\n"),
+    });
+  }
+  if (files.length) {
+    claims.push({
+      kind: "note",
+      heading: "files touched this session (fallback summary)",
+      body: files.map((f) => `- \`${f}\``).join("\n"),
+    });
+  }
+  return claims;
+}
+
+const EXTRACT_SYSTEM_PROMPT = `You extract durable claims from a coding-agent session transcript.
+
+Output ONLY markdown sections of this exact shape, one claim per section, the heading IS the claim:
+## decision: <what was decided>
+<one or two lines of why / evidence>
+
+Allowed kinds: decision, fact, open, todo, note.
+- decision: a choice that was made and why.
+- fact: something verified to be true (measured, tested, observed).
+- open: an unresolved question.
+- todo: a concrete follow-up action.
+- note: anything else a future session must know.
+
+Rules: use absolute dates (YYYY-MM-DD), never relative ones. Never invent anything not in
+the transcript. Never write secrets, API keys or passwords. Skip chit-chat; noise is the enemy.
+No preamble, no closing remarks, no code fences.`;
+
+export interface ShutdownCaptureInput {
+  paths: VaultPaths;
+  workspace: string;
+  sessionId: string;
+  created?: string;
+  branch: BranchEntry[];
+  complete?: CompleteFn;
+  budgetMs: number;
+}
+
+/**
+ * Freeze one session: model extraction raced against the host budget, else
+ * the deterministic fallback. Returns null when the session has nothing to
+ * record (no user text, no files). Never loses a non-empty session silently.
+ */
+export async function captureSession(
+  input: ShutdownCaptureInput,
+): Promise<SessionPageResult | null> {
+  const fallback = fallbackClaims(input.branch);
+  if (fallback.length === 0) return null;
+  let claims: Claim[] = [];
+  if (input.complete) {
+    const transcript = branchToTranscript(input.branch);
+    try {
+      const out = await raceWithTimeout(
+        input.complete(EXTRACT_SYSTEM_PROMPT, `SESSION TRANSCRIPT:\n\n${transcript}`),
+        input.budgetMs,
+        "session summary budget exceeded",
+      );
+      claims = parseClaims(out);
+    } catch {
+      claims = [];
+    }
+  }
+  const model = claims.length > 0;
+  return writeSessionPage(input.paths, {
+    workspace: input.workspace,
+    sessionId: input.sessionId,
+    created: input.created,
+    claims: model ? claims : fallback,
+    summaryQuality: model ? "model" : "fallback",
+  });
+}
+
+/**
+ * Wire the exit hook. Registered ONLY when the flag is on (index.ts); the flag
+ * is re-read at shutdown so toggling it off mid-session also stops writes.
+ * `reload` keeps the session alive, so it never freezes a page (§8.1-3).
+ */
+export function registerSessionShutdown(
+  pi: ExtensionAPI,
+  makeComplete: (ctx: ExtensionContext, timeoutMs: number) => CompleteFn,
+): void {
+  pi.on("session_shutdown", async (event, ctx) => {
+    if (event.reason === "reload") return;
+    try {
+      const config = loadTaskConfig(ctx.cwd);
+      if (!sessionPagesEnabled(config)) return;
+      const paths = resolveSessionVault(ctx.cwd);
+      if (!paths || !inspectWritableVault(paths).ok) return;
+      const budgetMs =
+        detectHost() === "omp"
+          ? OMP_SUMMARY_BUDGET_MS
+          : (config.sessionPages?.summaryTimeoutSec ?? 120) * 1000;
+      await captureSession({
+        paths,
+        workspace: workspaceSlug(paths, config),
+        sessionId: ctx.sessionManager.getSessionId(),
+        created: ctx.sessionManager.getHeader()?.timestamp,
+        branch: ctx.sessionManager.getBranch() as BranchEntry[],
+        complete: ctx.model ? makeComplete(ctx, budgetMs) : undefined,
+        budgetMs,
+      });
+    } catch (err) {
+      console.warn(`[llm-wiki] session page skipped: ${(err as Error).message}`);
+    }
   });
 }

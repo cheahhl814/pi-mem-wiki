@@ -24,8 +24,8 @@ import {
 } from "./lib/recall.js";
 import { registerWikiRetro } from "./lib/retro.js";
 import { registerBackgroundRuntime } from "./lib/runtime.js";
-import { maybeAutoDigest, registerWikiDigest } from "./lib/session-digest.js";
-import { registerWikiSessionCapture } from "./lib/session-pages.js";
+import { makeComplete, maybeAutoDigest, registerWikiDigest } from "./lib/session-digest.js";
+import { registerSessionShutdown, registerWikiSessionCapture } from "./lib/session-pages.js";
 import { registerWikiSettingsCommand } from "./lib/settings-command.js";
 import { slugify } from "./lib/utils.js";
 import {
@@ -149,6 +149,11 @@ export default function (pi: ExtensionAPI) {
   if (sessionPagesOn) {
     registerWikiSessionCapture(pi, () => runtime.config);
     registerWikiDigest(pi, runtime);
+    // Exit hook (§3): freeze this session into an immutable raw page.
+    registerSessionShutdown(pi, (ctx, timeoutMs) => {
+      runtime.ensureConfig(ctx.cwd);
+      return makeComplete(runtime, ctx, { timeoutMs });
+    });
     // Automatic compaction (§4): cheap gate check per turn, build in background.
     pi.on("turn_end", (_event, ctx) => {
       try {

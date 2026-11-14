@@ -116,6 +116,23 @@ a named target (never guessed) · hubs created only on explicit accept ·
 autonomy (`llm-wiki.autoApplyCold`) is OFF by default and opens only at
 ≥3 cold-bearing review rounds with ≥90% acceptance, capped 25/run.
 
+## Session memory pages (opt-in)
+
+Off by default. Enable it with `"llm-wiki": { "sessionPages": { "enabled": true } }`.
+Once on, each session that ends writes one **immutable** raw page,
+`wiki/sessions/<workspace>/<date>-<id>.md`. The page holds typed claims
+(`## decision:` / `fact:` / `open:` / `todo:` / `note:`), extracted by the task model.
+If the model call fails, a deterministic fallback is written instead.
+
+Raw pages are archives. They are never recalled ambiently or by default, and only
+`wiki_recall include_raw: true` returns them. `wiki_digest` (and an automatic
+per-turn check) compacts them into `wiki/digests/<workspace>.md`. It runs only when
+there are at least 5 new sessions and at least 24 h have passed since the last
+build (`force` skips both checks). It also takes a lock and supports `dry_run`.
+Compaction then cold-demotes the consumed raw pages, changing frontmatter only.
+Under oh-my-pi the 2 s shutdown cap means pages are usually the fallback kind.
+The design is in [DESIGN-session-memory.md](./DESIGN-session-memory.md).
+
 ## Local semantic recall
 
 Zero-cost hybrid recall, nothing leaves the machine (fix: upstream required an
