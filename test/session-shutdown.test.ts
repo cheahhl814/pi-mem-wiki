@@ -5,7 +5,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import extension from "../extensions/llm-wiki/index.js";
 import { parseKnowledgeDocument } from "../extensions/llm-wiki/lib/knowledge-document.js";
 import { rebuildMetadata } from "../extensions/llm-wiki/lib/metadata.js";
-import { captureSession, fallbackClaims } from "../extensions/llm-wiki/lib/session-pages.js";
+import {
+  captureSession,
+  fallbackClaims,
+  redactSecrets,
+} from "../extensions/llm-wiki/lib/session-pages.js";
 import {
   ensureVaultStructure,
   getVaultPaths,
@@ -168,5 +172,30 @@ describe("session_shutdown hook", () => {
     );
     await shutdown("quit", paths.root);
     expect(sessionFiles(paths)).toEqual([]);
+  });
+});
+
+describe("secret redaction before freeze", () => {
+  it("scrubs common token shapes but keeps ordinary prose and paths", () => {
+    const out = redactSecrets(
+      "use sk-abcdefghijklmnop1234 and ghp_abcdefghijklmnopqrstuvwxyz12 with AKIAABCDEFGHIJKLMNOP; password: hunter2hunter2 in src/lock.ts",
+    );
+    expect(out).not.toMatch(/sk-abc|ghp_abc|AKIAABC|hunter2/);
+    expect(out).toContain("password: [REDACTED]");
+    expect(out).toContain("src/lock.ts");
+  });
+
+  it("a fallback page never contains a pasted key", async () => {
+    const paths = freshVault();
+    const r = await captureSession({
+      ...base(paths),
+      branch: [
+        {
+          type: "message",
+          message: { role: "user", content: "my key is sk-live0123456789abcdefXYZ" },
+        },
+      ],
+    });
+    expect(readFileSync(r!.pagePath, "utf8")).not.toContain("sk-live0123456789");
   });
 });

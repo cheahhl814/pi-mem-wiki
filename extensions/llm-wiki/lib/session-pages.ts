@@ -350,6 +350,39 @@ export function fallbackClaims(branch: BranchEntry[]): Claim[] {
   return claims;
 }
 
+/**
+ * Best-effort secret scrub before anything is frozen into a write-once page
+ * (raw pages can never be edited to remove a leak). Applied to model output
+ * AND the fallback. ponytail: pattern list, not a full DLP scanner — extend
+ * SECRET_PATTERNS when a new token shape shows up.
+ */
+const SECRET_PATTERNS: RegExp[] = [
+  /\bsk-[A-Za-z0-9_-]{16,}/g, // OpenAI/Anthropic-style keys
+  /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/g, // GitHub tokens
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
+  /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, // AWS access key ids
+  /\bxox[abposr]-[A-Za-z0-9-]{10,}/g, // Slack
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, // JWT
+  /\b(Bearer|token|password|passwd|secret|api[_-]?key)(\s*[:=]\s*|\s+)\S{8,}/gi,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+  /\b[A-Za-z0-9+_-]{40,}={0,2}/g, // long high-entropy blobs (no "/" so paths survive)
+];
+
+export function redactSecrets(text: string): string {
+  let out = text;
+  for (const re of SECRET_PATTERNS) {
+    out = out.replace(re, (m, label?: string, sep?: string) =>
+      typeof label === "string" &&
+      typeof sep === "string" &&
+      /^[A-Za-z]/.test(m) &&
+      m.startsWith(label)
+        ? `${label}${sep}[REDACTED]`
+        : "[REDACTED]",
+    );
+  }
+  return out;
+}
+
 const EXTRACT_SYSTEM_PROMPT = `You extract durable claims from a coding-agent session transcript.
 
 Output ONLY markdown sections of this exact shape, one claim per section, the heading IS the claim:
@@ -402,11 +435,16 @@ export async function captureSession(
     }
   }
   const model = claims.length > 0;
+  const scrubbed = (model ? claims : fallback).map((c) => ({
+    ...c,
+    heading: redactSecrets(c.heading),
+    body: redactSecrets(c.body),
+  }));
   return writeSessionPage(input.paths, {
     workspace: input.workspace,
     sessionId: input.sessionId,
     created: input.created,
-    claims: model ? claims : fallback,
+    claims: scrubbed,
     summaryQuality: model ? "model" : "fallback",
   });
 }
