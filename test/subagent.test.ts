@@ -94,7 +94,8 @@ describe("issue #222 hardening", () => {
 
   it("runSubAgent resolves when a working streamFn is supplied for the custom api", async () => {
     const streamFn = vi.fn((_model: Model<Api>) => fakeStream());
-    await expect(runSubAgent({ ...baseArgs(), streamFn })).resolves.toBeUndefined();
+    // The loop's last assistant text is returned (tool-driven callers ignore it).
+    await expect(runSubAgent({ ...baseArgs(), streamFn })).resolves.toBe("ok");
     expect(streamFn).toHaveBeenCalledTimes(1);
     // The stream function must receive the resolved model.
     expect(streamFn.mock.calls[0][0]).toBe(CUSTOM_API_MODEL);

@@ -122,7 +122,9 @@ Off by default. Enable it with `"llm-wiki": { "sessionPages": { "enabled": true 
 Once on, each session that ends writes one **immutable** raw page,
 `wiki/sessions/<workspace>/<date>-<id>.md`. The page holds typed claims
 (`## decision:` / `fact:` / `open:` / `todo:` / `note:`), extracted by the task model.
-If the model call fails, a deterministic fallback is written instead.
+If the model call fails or overruns the budget, a deterministic fallback is written
+instead; the reason is logged, never swallowed. A model that answers in prose
+instead of the claim grammar keeps its answer as one `## note:` claim.
 
 Raw pages are archives. They are never recalled ambiently or by default, and only
 `wiki_recall include_raw: true` returns them. `wiki_digest` (and an automatic
@@ -134,7 +136,9 @@ Under oh-my-pi the 2 s shutdown cap means pages are usually the fallback kind.
 Pages go to the project vault only, unless you also set
 `sessionPages.personalFallback: true`. With that on, repos without a `.llm-wiki/`
 use the personal vault instead, with one workspace per git repo. This setting
-is read only from your user-level settings, so a repo's own settings can't turn it on.
+is read only from your **user-level** settings (`<agentDir>/settings.json`, e.g.
+`~/.pi/agent/settings.json`), so a repo's own settings can't turn it on — and a
+project-level `personalFallback` is ignored, so the opt-in must be set there.
 The design is in [DESIGN-session-memory.md](./DESIGN-session-memory.md).
 
 ## Local semantic recall

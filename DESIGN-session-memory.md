@@ -251,3 +251,24 @@ pin down areas where the original text was unsound or under-specified.
       - *Repo moves:* the key hashes the toplevel realpath, so moving or
         re-cloning a repo starts a new workspace (the old digest stays recallable).
         A 6-hex hash makes accidental collisions unlikely, not impossible.
+11. **Dogfood amendments (2026-11-21, after the first week of use).** The first
+    dogfood week produced **zero** raw pages and every later attempt produced
+    `summary_quality: fallback`; both were defects, not user error.
+    - *Flag scoping:* `personalFallback` is honoured only from user-level settings
+      (§8.1-10), so the project-level opt-in that earlier sessions used became a
+      no-op the moment that rule landed. The opt-in must live in the user-level
+      settings file (`<agentDir>/settings.json`); project-level `enabled` alone
+      captures only into a project vault.
+    - *Prose channel (item 5 amended):* `runSubAgent` now returns the last
+      assistant message's text. `makeComplete` prefers the `submit` tool but falls
+      back to that text when the model never calls it — the default model did not,
+      so every session silently degraded. The extraction prompt also allows a
+      plain-text final answer.
+    - *Prose salvage:* when the model's answer does not follow the claim grammar,
+      `captureSession` keeps it as one `## note:` claim instead of discarding it.
+      Only a model call that fails or exceeds the budget yields the deterministic
+      fallback. The failure reason is logged (`console.warn`), never swallowed.
+    - *Redaction:* the catch-all "long high-entropy blob" pattern now requires
+      lower+upper+digit, so kebab-case filenames and hex digests are no longer
+      redacted (they made the "files touched" list useless). Known token shapes
+      keep their own patterns.

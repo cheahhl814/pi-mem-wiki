@@ -438,7 +438,11 @@ const SECRET_PATTERNS: RegExp[] = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, // JWT
   /\b(Bearer|token|password|passwd|secret|api[_-]?key)(\s*[:=]\s*|\s+)\S{8,}/gi,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
-  /\b[A-Za-z0-9+_-]{40,}={0,2}/g, // long high-entropy blobs (no "/" so paths survive)
+  // Long high-entropy blobs. Requires lower+upper+digit so ordinary
+  // kebab-case filenames (obs-2026-11-21-…-2026-11-18.md) and hex digests
+  // are NOT redacted — the earlier lowercase-only pattern mangled every long
+  // path in the "files touched" list (2026-11-21).
+  /\b(?=[A-Za-z0-9+_-]*[a-z])(?=[A-Za-z0-9+_-]*[A-Z])(?=[A-Za-z0-9+_-]*\d)[A-Za-z0-9+_-]{40,}={0,2}\b/g,
 ];
 
 export function redactSecrets(text: string): string {
@@ -503,7 +507,27 @@ export async function captureSession(
         "session summary budget exceeded",
       );
       claims = parseClaims(out);
-    } catch {
+      if (claims.length === 0) {
+        // The model answered but ignored the claim grammar — keep its prose as
+        // one note claim instead of dropping it (the digest model reads page
+        // bodies, so unstructured text is still usable).
+        const prose = out.trim();
+        if (prose) {
+          claims = [
+            {
+              kind: "note",
+              heading: "session summary (model output, not in claim grammar)",
+              body: prose.slice(0, 4000),
+            },
+          ];
+        } else {
+          console.warn(
+            "[llm-wiki] session summary model produced no parsable claims; using fallback",
+          );
+        }
+      }
+    } catch (err) {
+      console.warn(`[llm-wiki] session summary failed: ${(err as Error).message}`);
       claims = [];
     }
   }

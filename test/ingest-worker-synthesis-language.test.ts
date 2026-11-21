@@ -37,7 +37,7 @@ describe("runIngestSynthesis language injection", () => {
 
     const spy = vi
       .spyOn(await import("../extensions/llm-wiki/lib/subagent.js"), "runSubAgent")
-      .mockResolvedValue();
+      .mockResolvedValue(undefined);
 
     // Mock source
     const sourceId = "SRC-2026-08-07-001";
@@ -69,7 +69,7 @@ describe("runIngestSynthesis language injection", () => {
 
     const spy = vi
       .spyOn(await import("../extensions/llm-wiki/lib/subagent.js"), "runSubAgent")
-      .mockResolvedValue();
+      .mockResolvedValue(undefined);
 
     const sourceId = "SRC-2026-08-07-002";
     const manifest = { id: sourceId, title: "Test Source", format: "markdown" };

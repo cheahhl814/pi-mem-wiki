@@ -97,7 +97,6 @@ describe("captureSession", () => {
 
   for (const [name, complete] of [
     ["throws", async () => Promise.reject(new Error("down"))],
-    ["ignores the grammar", async () => "Here is a summary of the session."],
     ["exceeds the budget", () => new Promise<string>(() => {})],
   ] as const) {
     it(`falls back when the model ${name}`, async () => {
@@ -108,6 +107,20 @@ describe("captureSession", () => {
       expect(doc.body).toContain("fallback summary");
     });
   }
+
+  it("salvages model prose that ignores the claim grammar (2026-11-21)", async () => {
+    // Losing the model's own summary because it used a different heading
+    // style is worse than keeping it as one note claim.
+    const paths = freshVault();
+    const r = await captureSession({
+      ...base(paths),
+      complete: async () => "Here is a summary of the session.",
+    });
+    const doc = pageOf(r!.pagePath);
+    expect(doc.extensions.summary_quality).toBe("model");
+    expect(doc.body).toContain("Here is a summary of the session.");
+    expect(doc.body).toContain("## note:");
+  });
 });
 
 function harness() {

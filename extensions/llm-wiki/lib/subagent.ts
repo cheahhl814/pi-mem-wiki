@@ -93,11 +93,34 @@ export function raceWithTimeout<T>(
 }
 
 /**
+ * Extract the text of the last assistant message in a loop transcript.
+ * Returns undefined when the model produced no text (tool-only turns).
+ */
+export function lastAssistantText(messages: unknown): string | undefined {
+  if (!Array.isArray(messages)) return undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i] as { role?: string; content?: unknown };
+    if (m?.role !== "assistant" || !Array.isArray(m.content)) continue;
+    const text = m.content
+      .filter((p) => (p as { type?: string })?.type === "text")
+      .map((p) => (p as { text?: string })?.text ?? "")
+      .join("")
+      .trim();
+    if (text) return text;
+  }
+  return undefined;
+}
+
+/**
  * Run a sub-agent loop to completion.
  *
- * Returns nothing useful directly — by design, results are collected by the
- * `tools` the caller passes (their `execute` accumulates into caller-owned
- * state). This keeps the runner generic across every background task type.
+ * Returns the text of the last assistant message, when the model produced
+ * one. Results are otherwise collected by the `tools` the caller passes
+ * (their `execute` accumulates into caller-owned state), so tool-driven
+ * callers can ignore the return value. The text return exists because a
+ * model that ignores a "submit" tool still often answers in prose — callers
+ * that need the answer (session summarization) can use that instead of
+ * losing the result (see makeComplete in session-digest.ts).
  *
  * Rejections from the loop (provider errors, auth failures, a streamFn that
  * throws) reject this promise, so `BackgroundRuntime.launchTask`'s try/catch
@@ -105,7 +128,7 @@ export function raceWithTimeout<T>(
  */
 export async function runSubAgent<TApi extends Api = Api>(
   args: RunSubAgentArgs<TApi>,
-): Promise<void> {
+): Promise<string | undefined> {
   const {
     model,
     apiKey,
@@ -120,7 +143,7 @@ export async function runSubAgent<TApi extends Api = Api>(
   } = args;
 
   const text = userPrompt.trim();
-  if (!text) return;
+  if (!text) return undefined;
 
   const prompts: Message[] = [
     {
@@ -193,7 +216,15 @@ export async function runSubAgent<TApi extends Api = Api>(
     ) => EventStream<unknown>;
   };
   if (agentCore.runAgentLoop) {
-    await agentCore.runAgentLoop(prompts, context, config, async () => {}, signal, activeStreamFn);
+    const messages = await agentCore.runAgentLoop(
+      prompts,
+      context,
+      config,
+      async () => {},
+      signal,
+      activeStreamFn,
+    );
+    return lastAssistantText(messages);
   } else if (agentCore.agentLoop) {
     const stream = agentCore.agentLoop(prompts, context, config, signal, activeStreamFn);
     // The bundled agentLoop is the detached `void runAgentLoop(...).then(...)`
@@ -202,9 +233,13 @@ export async function runSubAgent<TApi extends Api = Api>(
     // forever. Cap it so a stall surfaces as a catchable error (degraded to a
     // warning toast by BackgroundRuntime) instead of a hang.
     // ponytail: hard cap — raise if legitimate runs exceed it.
+    let finalMessages: unknown;
+    let lastTurnMessage: unknown;
     const drain = (async () => {
-      for await (const _event of stream) {
-        // Discard events; results are collected caller-side via tool side effects.
+      for await (const event of stream) {
+        const e = event as { type?: string; messages?: unknown; message?: unknown };
+        if (e?.type === "agent_end") finalMessages = e.messages;
+        else if (e?.type === "turn_end" && e.message) lastTurnMessage = e.message;
       }
     })();
     await raceWithTimeout(
@@ -212,6 +247,7 @@ export async function runSubAgent<TApi extends Api = Api>(
       120_000,
       "omp agentLoop stream stalled: no end/fail event within 120s",
     );
+    return lastAssistantText(finalMessages ?? (lastTurnMessage ? [lastTurnMessage] : undefined));
   } else {
     throw new Error("Neither runAgentLoop nor agentLoop is exported by pi-agent-core");
   }

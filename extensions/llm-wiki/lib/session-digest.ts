@@ -482,19 +482,23 @@ export function makeComplete(
         return { content: [{ type: "text" as const, text: "Submitted. Stop." }], details: {} };
       },
     };
-    await runSubAgent({
+    const prose = await runSubAgent({
       model: resolved.model as Model<Api>,
       apiKey: resolved.apiKey,
       headers: resolved.headers,
       streamFn: resolved.streamFn as Parameters<typeof runSubAgent>[0]["streamFn"],
       env: resolved.env,
-      systemPrompt: `${systemPrompt}\n\nDeliver the result by calling the submit tool exactly once with the full text.`,
+      systemPrompt: `${systemPrompt}\n\nDeliver the result by calling the submit tool exactly once with the full text. If you cannot call tools, reply with the full text as your final message.`,
       userPrompt,
       tools: [submitTool as unknown as AgentTool],
       signal: opts.timeoutMs ? AbortSignal.timeout(opts.timeoutMs) : undefined,
     });
-    if (!submitted.trim()) throw new Error("model did not submit a result");
-    return submitted;
+    if (submitted.trim()) return submitted;
+    // A model that ignores the submit tool still often answers in prose —
+    // use that instead of losing the summary (2026-11-21: the default model
+    // never called submit, so every session page degraded to the fallback).
+    if (prose?.trim()) return prose;
+    throw new Error("model did not submit a result");
   };
 }
 
